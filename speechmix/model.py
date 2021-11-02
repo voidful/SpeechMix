@@ -12,6 +12,8 @@ class SpeechMixED(nn.Module):
     def __init__(self, speech_model_config, nlp_model_config, ftl=False):
         super(SpeechMixED, self).__init__()
         self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(speech_model_config, nlp_model_config)
+        self.model.config.decoder_start_token_id = self.model.config.decoder.decoder_start_token_id
+        self.model.config.pad_token_id = self.model.config.decoder.pad_token_id
         self.processor = Wav2Vec2Processor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         if ftl:
@@ -22,10 +24,10 @@ class SpeechMixED(nn.Module):
                     else:
                         param.requires_grad = False
 
-    def forward(self, input_values, decoder_input_ids=None):
-        if decoder_input_ids is None:
+    def forward(self, input_values, decoder_input_ids=None, labels=None):
+        if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.model.config.decoder)
-        outputs = self.model(input_values, decoder_input_ids=decoder_input_ids)
+        outputs = self.model(input_values=input_values, decoder_input_ids=decoder_input_ids, labels=labels)
         return outputs
 
 
@@ -56,13 +58,13 @@ class SpeechMixEED(nn.Module):
                 if param.requires_grad:
                     param.requires_grad = False
 
-    def forward(self, input_values, decoder_input_ids=None):
-        if decoder_input_ids is None:
+    def forward(self, input_values, decoder_input_ids=None, labels=None):
+        if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config)
         inputs_embeds = self.encoder_model(input_values=input_values)['last_hidden_state']
         for _ in range(3):
             inputs_embeds = self.length_adapter(inputs_embeds.transpose(1, 2)).transpose(1, 2)
         projected_embeds = self.enc_to_dec_proj(inputs_embeds)
         outputs = self.decoder_model(inputs_embeds=projected_embeds,
-                                     decoder_input_ids=decoder_input_ids)
+                                     decoder_input_ids=decoder_input_ids, labels=labels)
         return outputs

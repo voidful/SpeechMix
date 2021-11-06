@@ -144,7 +144,7 @@ def main(arg=None):
         tokenizer=model.tokenizer
     )
 
-    # trainer.train()
+    trainer.train()
     trainer.predict(train_ds)
 
 

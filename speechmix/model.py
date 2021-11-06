@@ -1,16 +1,17 @@
 from torch import nn
 from transformers import Wav2Vec2Model, AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
-    Wav2Vec2Processor
+    Wav2Vec2Processor, HubertModel, UniSpeechSatModel
 import torch
 
 
-def handle_decoder_input_none(decoder_config):
-    return torch.tensor([[decoder_config.decoder_start_token_id]])
+def handle_decoder_input_none(decoder_config, device='cpu'):
+    return torch.tensor([[decoder_config.decoder_start_token_id]]).to(device)
 
 
 class SpeechMixED(nn.Module):
     def __init__(self, speech_model_config, nlp_model_config, ftl=False):
         super(SpeechMixED, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(speech_model_config, nlp_model_config)
         self.model.config.decoder_start_token_id = self.model.config.decoder.decoder_start_token_id
         self.model.config.pad_token_id = self.model.config.decoder.pad_token_id
@@ -26,15 +27,24 @@ class SpeechMixED(nn.Module):
 
     def forward(self, input_values, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.model.config.decoder)
+            decoder_input_ids = handle_decoder_input_none(self.model.config.decoder, self.device)
         outputs = self.model(input_values=input_values, decoder_input_ids=decoder_input_ids, labels=labels)
-        return outputs
+        return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
+        if outputs.get('loss', None):
+            return_dict['loss'] = outputs['loss']
+        return return_dict
 
 
 class SpeechMixEED(nn.Module):
     def __init__(self, speech_model_config, nlp_model_config, lna=False, fne=False):
         super(SpeechMixEED, self).__init__()
-        self.encoder_model = Wav2Vec2Model.from_pretrained(speech_model_config)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if 'hubert' in speech_model_config:
+            self.encoder_model = HubertModel.from_pretrained(speech_model_config)
+        elif 'unispeech' in speech_model_config:
+            self.encoder_model = UniSpeechSatModel.from_pretrained(speech_model_config)
+        else:
+            self.encoder_model = Wav2Vec2Model.from_pretrained(speech_model_config)
         self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(nlp_model_config)
         self.processor = Wav2Vec2Processor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
@@ -49,7 +59,7 @@ class SpeechMixEED(nn.Module):
             for xcoder in [self.encoder_model.named_parameters, self.decoder_model.named_parameters]:
                 for name, param in xcoder():
                     if param.requires_grad:
-                        if any([k in name for k in ["layer_norm", "attention"]]):
+                        if any([k in name for k in ["layer_norm", "encoder_attn"]]):
                             param.requires_grad = True
                         else:
                             param.requires_grad = False
@@ -60,11 +70,14 @@ class SpeechMixEED(nn.Module):
 
     def forward(self, input_values, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config)
+            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, self.device)
         inputs_embeds = self.encoder_model(input_values=input_values)['last_hidden_state']
         for _ in range(3):
             inputs_embeds = self.length_adapter(inputs_embeds.transpose(1, 2)).transpose(1, 2)
         projected_embeds = self.enc_to_dec_proj(inputs_embeds)
         outputs = self.decoder_model(inputs_embeds=projected_embeds,
                                      decoder_input_ids=decoder_input_ids, labels=labels)
-        return outputs
+        return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
+        if outputs.get('loss', None):
+            return_dict['loss'] = outputs['loss']
+        return return_dict

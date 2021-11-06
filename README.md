@@ -96,3 +96,7 @@ git clone and cd into this project.
 ```bash
 pip install -e .
 ```
+
+## Example
+usage
+`python train.py --speech_model_config voidful/wav2vec2-large-xlsr-53-tw-gpt --nlp_model_config voidful/bart-base-chinese --SpeechMixEED --fne`

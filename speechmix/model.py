@@ -180,13 +180,16 @@ class SpeechMixEED(nn.Module):
             for xcoder in [self.encoder_model.named_parameters, self.decoder_model.named_parameters]:
                 for name, param in xcoder():
                     if param.requires_grad:
-                        if any([k in name for k in ["layer_norm", "encoder_attn"]]):
+                        if any([k in name for k in
+                                ["layer_norm", "encoder_attn", 'attention', 'enc_to_dec_proj', 'length_adapter',
+                                 'lm_head', 'shared']]) or (
+                                'encoder' in name and 'self_attn' in name):
                             param.requires_grad = True
                         else:
                             param.requires_grad = False
         elif fne:
             for name, param in self.decoder_model.named_parameters():
-                if param.requires_grad:
+                if param.requires_grad and not any([k in name for k in ['lm_head', 'shared']]):
                     param.requires_grad = False
 
     def forward(self, input_values, decoder_input_ids=None, labels=None):
@@ -206,7 +209,7 @@ class SpeechMixEED(nn.Module):
 
 class SpeechMixSelf(SpeechMixEED):
 
-    def forward(self, input_values, input_ids=None, decoder_input_ids=None):
+    def forward(self, input_values, input_ids=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, self.device)
         inputs_embeds = self.encoder_model(input_values=input_values.to(self.device))['last_hidden_state']
@@ -220,7 +223,9 @@ class SpeechMixSelf(SpeechMixEED):
         if input_ids is not None:
             nlp_hidden = \
                 self.decoder_model(input_ids.to(self.device), output_hidden_states=True)['encoder_hidden_states'][0]
-            attn_output = torch.bmm(nlp_hidden, projected_embeds.view(1, 768, -1))
+            attn_output = torch.bmm(nlp_hidden,
+                                    projected_embeds.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size,
+                                                          -1))
             voice_projected_embeds = torch.bmm(attn_output, projected_embeds)
 
             kld_outputs = self.decoder_model(input_ids.to(self.device),

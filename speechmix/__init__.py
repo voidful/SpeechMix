@@ -1,1 +1,1 @@
-from .model import SpeechMixED, SpeechMixEED
+from .model import SpeechMixED, SpeechMixEED,SpeechMixSelf

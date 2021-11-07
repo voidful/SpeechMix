@@ -15,8 +15,8 @@ def main(arg=None):
     def prepare_dataset(batch):
         audio = batch["audio"]
         batch["input_values"] = model.processor(audio["array"], sampling_rate=16_000).input_values[0]
-        batch["input_ids"] = batch["input_values"]
         batch["labels"] = model.tokenizer(batch["sentence"]).input_ids
+        batch["input_ids"] = batch["labels"]
         return batch
 
     def compute_metrics(pred):
@@ -78,6 +78,7 @@ def main(arg=None):
         parser.add_argument("--nlp_model_config", type=str)
         parser.add_argument("--SpeechMixEED", action='store_true')
         parser.add_argument("--SpeechMixED", action='store_true')
+        parser.add_argument("--SpeechMixSelf", action='store_true')
         parser.add_argument("--ftl", action='store_true')
         parser.add_argument("--lna", action='store_true')
         parser.add_argument("--fne", action='store_true')
@@ -98,6 +99,9 @@ def main(arg=None):
             model_type += "_fne"
         model = speechmix.SpeechMixEED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                        lna=input_arg['lna'], fne=input_arg['fne'])
+    elif input_arg['SpeechMixSelf']:
+        model_type = "SpeechMixSelf"
+        model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'])
     else:
         model_type = "SpeechMixED"
         if input_arg['ftl']:

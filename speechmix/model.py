@@ -170,7 +170,7 @@ class SpeechMixEED(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         # remove last x layer
         self.encoder_model.encoder.layers = self.encoder_model.encoder.layers[
-                                            :len(self.decoder_model.model.encoder.layers)]
+                                            :-len(self.decoder_model.model.encoder.layers)]
         self.enc_to_dec_proj = nn.Linear(self.encoder_model.config.hidden_size,
                                          self.decoder_model.config.hidden_size).to(self.device)
         self.length_adapter = nn.Conv1d(self.encoder_model.config.hidden_size, self.encoder_model.config.hidden_size,

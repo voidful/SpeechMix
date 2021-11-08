@@ -79,7 +79,10 @@ def main(arg=None):
         parser.add_argument("--SpeechMixSelf", action='store_true')
         parser.add_argument("--dataset", type=str)
         parser.add_argument("--field", type=str)
-        parser.add_argument("--split", type=str)
+        parser.add_argument("--train_split", type=str)
+        parser.add_argument("--test_split", type=str)
+        parser.add_argument("--grad_accum", default=3, type=str)
+        parser.add_argument("--batch", type=int)
         parser.add_argument("--ftl", action='store_true')
         parser.add_argument("--lna", action='store_true')
         parser.add_argument("--lnae", action='store_true')
@@ -113,22 +116,22 @@ def main(arg=None):
         model = speechmix.SpeechMixED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                       ftl=input_arg['ftl'])
 
-    train_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["split"])
-    valid_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["split"])
+    train_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["train_split"])
+    valid_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["test_split"])
 
     train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
     valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-    train_ds = train_ds.map(prepare_dataset, num_proc=1)
-    valid_ds = valid_ds.map(prepare_dataset, num_proc=1)
+    train_ds = train_ds.map(prepare_dataset, num_proc=1, keep_in_memory=True)
+    valid_ds = valid_ds.map(prepare_dataset, num_proc=1, keep_in_memory=True)
 
     data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True)
 
     training_args = TrainingArguments(
         output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}",
-        per_device_train_batch_size=6,
-        per_device_eval_batch_size=6,
-        gradient_accumulation_steps=5,
+        per_device_train_batch_size=input_arg['batch'],
+        per_device_eval_batch_size=input_arg['batch'],
+        gradient_accumulation_steps=input_arg['grad_accum'],
         eval_accumulation_steps=2,
         evaluation_strategy="steps",
         group_by_length=True,

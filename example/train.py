@@ -135,6 +135,7 @@ def main(arg=None):
         eval_accumulation_steps=2,
         evaluation_strategy="steps",
         group_by_length=True,
+        load_best_model_at_end=True,
         num_train_epochs=60,
         fp16=False,
         save_steps=500,

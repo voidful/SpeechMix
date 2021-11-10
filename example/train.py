@@ -42,18 +42,19 @@ def main(arg=None):
         max_length_labels: Optional[int] = None
         pad_to_multiple_of: Optional[int] = None
         pad_to_multiple_of_labels: Optional[int] = None
+        selftype: bool = False
 
         def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
             # split inputs and labels since they have to be of different lenghts and need
             # different padding methods
             input_features = [{"input_values": feature["input_values"]} for feature in features]
-            target_name = 'labels' if "labels" in features[0] else "input_ids"
-            label_features = [{"input_ids": feature[target_name]} for feature in features]
+            label_features = [{"input_ids": feature['labels']} for feature in features]
 
             batch = self.processor.pad(
                 input_features,
                 padding=self.padding,
                 max_length=self.max_length,
+                return_attention_mask=True,
                 pad_to_multiple_of=self.pad_to_multiple_of,
                 return_tensors="pt",
             )
@@ -64,10 +65,13 @@ def main(arg=None):
                 max_length=self.max_length_labels,
                 pad_to_multiple_of=self.pad_to_multiple_of_labels,
                 return_tensors="pt",
-            ).input_ids
+            )
 
-            batch[target_name] = labels_batch
-            batch.pop('attention_mask', None)
+            if self.selftype:
+                labels_batch = labels_batch['input_ids']
+            else:
+                labels_batch = labels_batch['input_ids'].masked_fill(labels_batch.attention_mask.ne(1), -100)
+            batch['labels'] = labels_batch
             return batch
 
     def parse_args(args):
@@ -122,30 +126,34 @@ def main(arg=None):
     train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
     valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-    train_ds = train_ds.map(prepare_dataset, num_proc=1, keep_in_memory=True)
-    valid_ds = valid_ds.map(prepare_dataset, num_proc=1, keep_in_memory=True)
+    train_ds = train_ds.map(prepare_dataset, num_proc=1)
+    valid_ds = valid_ds.map(prepare_dataset, num_proc=1)
 
-    data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True)
+    data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True,
+                                            selftype=(model_type == 'SpeechMixSelf'))
 
     training_args = TrainingArguments(
         output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}",
-        per_device_train_batch_size=input_arg['batch'],
-        per_device_eval_batch_size=input_arg['batch'],
-        gradient_accumulation_steps=input_arg['grad_accum'],
+        per_device_train_batch_size=int(input_arg['batch']),
+        per_device_eval_batch_size=int(input_arg['batch']),
+        gradient_accumulation_steps=int(input_arg['grad_accum']),
         eval_accumulation_steps=2,
         evaluation_strategy="steps",
-        group_by_length=True,
+        group_by_length=False,
         load_best_model_at_end=True,
-        num_train_epochs=60,
-        fp16=False,
+        num_train_epochs=1000,
+        fp16=True,
         save_steps=500,
         eval_steps=500,
         logging_steps=100,
         learning_rate=3e-4,
         warmup_steps=500,
         save_total_limit=2,
+        dataloader_num_workers=10,
     )
-    # some trainer problem - save all logistics on compute_metrics, cause out of memory, fix:argmax first; dynamic padding on past key value, cause index error, fix: return only loss and logist
+    # some trainer problem - save all logistics on compute_metrics, cause out of memory, fix:argmax first;
+    # dynamic padding on past key value, cause index error, fix: return only loss and logist
+    # group_by_length took lots of time during preprocessing
     trainer = Trainer(
         model=model,
         args=training_args,

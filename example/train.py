@@ -15,6 +15,7 @@ def main(arg=None):
     def prepare_dataset(batch):
         audio = batch["audio"]
         batch["input_values"] = model.processor(audio["array"], sampling_rate=16_000).input_values[0]
+        batch["length"] = len(batch["input_values"])
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         batch["labels"] = model.tokenizer(sent).input_ids[1:]
         batch["input_ids"] = batch["labels"]
@@ -54,7 +55,6 @@ def main(arg=None):
                 input_features,
                 padding=self.padding,
                 max_length=self.max_length,
-                return_attention_mask=True,
                 pad_to_multiple_of=self.pad_to_multiple_of,
                 return_tensors="pt",
             )
@@ -129,6 +129,7 @@ def main(arg=None):
     train_ds = train_ds.map(prepare_dataset, num_proc=1)
     valid_ds = valid_ds.map(prepare_dataset, num_proc=1)
 
+    print("selftype", (model_type == 'SpeechMixSelf'))
     data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True,
                                             selftype=(model_type == 'SpeechMixSelf'))
 
@@ -139,7 +140,7 @@ def main(arg=None):
         gradient_accumulation_steps=int(input_arg['grad_accum']),
         eval_accumulation_steps=2,
         evaluation_strategy="steps",
-        group_by_length=False,
+        group_by_length=True,
         load_best_model_at_end=True,
         num_train_epochs=1000,
         fp16=True,

@@ -15,7 +15,7 @@ def main(arg=None):
     def prepare_dataset(batch):
         audio = batch["audio"]
         batch["input_values"] = model.processor(audio["array"], sampling_rate=16_000).input_values[0]
-        batch["length"] = len(batch["input_values"])
+        batch["length"] = batch["input_values"].size
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         batch["labels"] = model.tokenizer(sent).input_ids[1:]
         batch["input_ids"] = batch["labels"]

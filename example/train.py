@@ -1,10 +1,11 @@
 import argparse
+import os
 import sys
 
 import asrp
 
 import speechmix
-from datasets import load_dataset, Audio
+from datasets import load_dataset, Audio, load_from_disk
 import torch
 from transformers import Wav2Vec2Processor, Trainer, TrainingArguments, EarlyStoppingCallback
 from typing import Dict, List, Union, Optional
@@ -81,6 +82,7 @@ def main(arg=None):
         parser.add_argument("--SpeechMixEED", action='store_true')
         parser.add_argument("--SpeechMixED", action='store_true')
         parser.add_argument("--SpeechMixSelf", action='store_true')
+        parser.add_argument("--SpeechMixGAN", action='store_true')
         parser.add_argument("--dataset", type=str)
         parser.add_argument("--field", type=str)
         parser.add_argument("--train_split", type=str)
@@ -113,6 +115,9 @@ def main(arg=None):
     elif input_arg['SpeechMixSelf']:
         model_type = "SpeechMixSelf"
         model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'])
+    elif input_arg['SpeechMixGAN']:
+        model_type = "SpeechMixGAN"
+        model = speechmix.SpeechMixGAN(input_arg['speech_model_config'], input_arg['nlp_model_config'])
     else:
         model_type = "SpeechMixED"
         if input_arg['ftl']:
@@ -120,16 +125,25 @@ def main(arg=None):
         model = speechmix.SpeechMixED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                       ftl=input_arg['ftl'])
 
-    train_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["train_split"])
-    valid_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["test_split"])
+    cache_path_train = f'./train_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
+    cache_path_valid = f'./valid_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
 
-    train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
-    valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
+    if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
+        train_ds = load_from_disk(cache_path_train)
+        valid_ds = load_from_disk(cache_path_valid)
+    else:
+        train_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["train_split"])
+        valid_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["test_split"])
 
-    train_ds = train_ds.map(prepare_dataset, num_proc=1)
-    valid_ds = valid_ds.map(prepare_dataset, num_proc=1)
+        train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
+        valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-    print("selftype", (model_type == 'SpeechMixSelf'))
+        train_ds = train_ds.map(prepare_dataset, num_proc=1, )
+        valid_ds = valid_ds.map(prepare_dataset, num_proc=1, )
+
+        train_ds.save_to_disk(cache_path_train)
+        valid_ds.save_to_disk(cache_path_valid)
+
     data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True,
                                             selftype=(model_type == 'SpeechMixSelf'))
 
@@ -163,7 +177,7 @@ def main(arg=None):
         eval_dataset=valid_ds,
         data_collator=data_collator,
         tokenizer=model.tokenizer,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=5)]
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=20)]
     )
 
     trainer.train()

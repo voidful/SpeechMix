@@ -69,9 +69,11 @@ class SpeechMixEED(nn.Module):
                                          self.decoder_model.config.hidden_size).to(self.device)
         self.downsize = 8
         self.downloop = int(math.log(self.downsize, 2))
-        self.length_adapter = nn.Conv1d(self.encoder_model.config.hidden_size, self.encoder_model.config.hidden_size,
-                                        2,
+        self.length_adapter = nn.Conv1d(in_channels=self.encoder_model.config.hidden_size,
+                                        out_channels=self.encoder_model.config.hidden_size,
+                                        kernel_size=2,
                                         stride=2).to(self.device)
+        self.custom_modules()
         if lna or lnae:
             for xcoder in [self.encoder_model.named_parameters, self.decoder_model.named_parameters]:
                 for name, param in xcoder():
@@ -87,6 +89,9 @@ class SpeechMixEED(nn.Module):
             for name, param in self.decoder_model.named_parameters():
                 if param.requires_grad:
                     param.requires_grad = False
+
+    def custom_modules(self):
+        return None
 
     def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
         output = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
@@ -130,24 +135,73 @@ class SpeechMixSelf(SpeechMixEED):
     def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
         if labels is not None:
             labels = labels.to(self.device)
-
         outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                      decoder_input_ids=decoder_input_ids, labels=labels)
         if labels is not None:
             nlp_outputs = self.decoder_model(labels, output_hidden_states=True,
-                                             decoder_input_ids=decoder_input_ids, labels=labels)
+                                             decoder_input_ids=decoder_input_ids)
             nlp_hidden = nlp_outputs['encoder_hidden_states'][0]
             attn_output = torch.bmm(nlp_hidden,
-                                    inputs_embeds.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size,
-                                                       -1))
+                                    inputs_embeds.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1))
             voice_projected_embeds = torch.bmm(attn_output, inputs_embeds)
 
             mse_loss_fn = torch.nn.MSELoss()
-            kld_loss_fn = torch.nn.KLDivLoss()
-            kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(nlp_outputs.logits, dim=-1),
-                                   torch.nn.functional.softmax(outputs.logits, dim=-1))
+            # kld_loss_fn = torch.nn.KLDivLoss()
+            # kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(nlp_outputs.logits, dim=-1),
+            #                        torch.nn.functional.softmax(outputs.logits, dim=-1))
             mse_loss = mse_loss_fn(voice_projected_embeds, nlp_hidden)
-            loss = kld_loss + mse_loss + outputs.loss
+            loss = mse_loss + outputs.loss
+            outputs['loss'] = loss
+
+        return outputs
+
+
+class SpeechMixGAN(SpeechMixEED):
+
+    def custom_modules(self):
+        self.discriminator = nn.Linear(self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
+        return None
+
+    def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
+        decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, self.device)
+        outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
+                                     output_hidden_states=True,
+                                     decoder_input_ids=decoder_input_ids)
+
+        if labels is not None:
+            voice_hidden = outputs['decoder_hidden_states'][-1]
+
+            labels = labels.to(self.device)
+            nlp_outputs = self.decoder_model(labels, output_hidden_states=True,
+                                             decoder_input_ids=decoder_input_ids)
+            nlp_hidden = nlp_outputs['decoder_hidden_states'][-1]
+            nlp_encoder_hidden = nlp_outputs['encoder_hidden_states'][0]
+            attn_output = torch.bmm(nlp_encoder_hidden,
+                                    inputs_embeds.view(nlp_encoder_hidden.shape[0],
+                                                       self.decoder_model.config.hidden_size, -1))
+            voice_projected_embeds = torch.bmm(attn_output, inputs_embeds)
+            mse_loss_fn = torch.nn.MSELoss()
+            loss_fn = torch.nn.BCEWithLogitsLoss()
+            mse_loss = mse_loss_fn(voice_projected_embeds, nlp_encoder_hidden)
+            loss = mse_loss
+
+            voice_attn_output = torch.bmm(
+                voice_hidden.view(voice_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                voice_hidden.view(voice_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
+                .flatten(start_dim=1)
+
+            vt_loss = loss_fn(self.discriminator(voice_attn_output).flatten(),
+                              torch.zeros(voice_attn_output.shape[0]).to(self.device))
+
+            nlp_attn_output = torch.bmm(
+                nlp_hidden.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                nlp_hidden.view(nlp_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
+                .flatten(start_dim=1)
+
+            nt_loss = loss_fn(self.discriminator(nlp_attn_output).flatten(),
+                              torch.ones(nlp_attn_output.shape[0]).to(self.device))
+            loss += vt_loss + nt_loss
+
             outputs['loss'] = loss
 
         return outputs

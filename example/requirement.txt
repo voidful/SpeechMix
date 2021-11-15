@@ -1,0 +1,4 @@
+asrp
+transformers>=4.12.3
+datasets>=1.15.1
+librosa

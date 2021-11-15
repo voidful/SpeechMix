@@ -98,5 +98,19 @@ pip install -e .
 ```
 
 ## Example
-usage
-`python train.py --speech_model_config voidful/wav2vec2-large-xlsr-53-tw-gpt --nlp_model_config voidful/bart-base-chinese --SpeechMixEED --fne`
+usage:   
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixEED --lna --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 8`   
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixEED --fne --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 8`    
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixED --dataset librispeech_asr --field other --train_split train.500 --test_split validation --batch 3 --grad_accum 8`    
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixED --ftl --dataset librispeech_asr --field other --train_split train.500 --test_split validation --batch 3 --grad_accum 8`   
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 10`   
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixGAN  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 10`   
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixSelf  --dataset common_voice --field en --train_split train --test_split test --batch 5 --grad_accum 8`   
+
+`python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixEED --lna --dataset patrickvonplaten/librispeech_asr_dummy --field clean --train_split validation --test_split test --batch 3 --grad_accum 4`

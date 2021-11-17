@@ -145,7 +145,7 @@ def main(arg=None):
         valid_ds.save_to_disk(cache_path_valid)
 
     data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True,
-                                            selftype=(model_type == 'SpeechMixSelf'))
+                                            selftype=(model_type == 'SpeechMixSelf' or model_type == 'SpeechMixGAN'))
 
     training_args = TrainingArguments(
         output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}",
@@ -161,7 +161,7 @@ def main(arg=None):
         save_steps=500,
         eval_steps=500,
         logging_steps=100,
-        learning_rate=3e-4,
+        learning_rate=6e-4,
         warmup_steps=500,
         save_total_limit=2,
         dataloader_num_workers=10,

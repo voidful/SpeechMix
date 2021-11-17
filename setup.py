@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='speechmix',
-    version='0.0.20',
+    version='0.0.24',
     description='Explore different way to mix speech model(wav2vec2, hubert) and nlp model(BART,T5,GPT) together',
     url='https://github.com/voidful/SpeechMix',
     author='Voidful',

@@ -6,8 +6,8 @@ from transformers import Wav2Vec2Model, AutoModelForSeq2SeqLM, SpeechEncoderDeco
 import torch
 
 
-def handle_decoder_input_none(decoder_config, device='cpu'):
-    return torch.tensor([[decoder_config.decoder_start_token_id]]).to(device)
+def handle_decoder_input_none(decoder_config, batch=1, device='cpu'):
+    return torch.tensor([[decoder_config.decoder_start_token_id]] * batch).to(device)
 
 
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
@@ -40,11 +40,11 @@ class SpeechMixED(nn.Module):
 
     def forward(self, input_values, attention_mask=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.model.config.decoder, self.device)
+            decoder_input_ids = handle_decoder_input_none(self.model.config.decoder, device=self.device)
         outputs = self.model(input_values=input_values, attention_mask=attention_mask,
                              decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
-        if outputs.get('loss', None):
+        if 'loss' in outputs:
             return_dict['loss'] = outputs['loss']
         return return_dict
 
@@ -100,7 +100,8 @@ class SpeechMixEED(nn.Module):
 
     def forward(self, input_values, attention_mask=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, self.device)
+            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, input_values.shape[0],
+                                                          device=self.device)
         elif decoder_input_ids is None and labels is not None:
             decoder_input_ids = shift_tokens_right(labels, self.decoder_model.config.pad_token_id,
                                                    self.decoder_model.config.decoder_start_token_id)
@@ -125,7 +126,7 @@ class SpeechMixEED(nn.Module):
                                 decoder_input_ids=decoder_input_ids, labels=labels)
 
         return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
-        if outputs.get('loss', None):
+        if 'loss' in outputs:
             return_dict['loss'] = outputs['loss']
         return return_dict
 
@@ -160,15 +161,34 @@ class SpeechMixGAN(SpeechMixEED):
 
     def custom_modules(self):
         self.discriminator = nn.Linear(self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
+        self.des_update = 1000
+        self.update_count = 1
+        self.keep_update = 1000
         return None
 
     def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
-        decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, self.device)
+        decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, device=self.device)
         outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                      output_hidden_states=True,
                                      decoder_input_ids=decoder_input_ids)
-
+        loss = 0
         if labels is not None:
+            if self.training:
+                if self.update_count % self.des_update == 0:
+                    if self.keep_update > 0:
+                        self.keep_update -= 1
+                        for name, p in self.named_parameters():
+                            if 'discriminator' in name:
+                                p.grad = None
+                    else:
+                        self.keep_update = 1000
+                        self.update_count += 1
+                else:
+                    self.update_count += 1
+                    for name, p in self.named_parameters():
+                        if 'discriminator' not in name:
+                            p.grad = None
+
             voice_hidden = outputs['decoder_hidden_states'][-1]
 
             labels = labels.to(self.device)
@@ -176,14 +196,22 @@ class SpeechMixGAN(SpeechMixEED):
                                              decoder_input_ids=decoder_input_ids)
             nlp_hidden = nlp_outputs['decoder_hidden_states'][-1]
             nlp_encoder_hidden = nlp_outputs['encoder_hidden_states'][0]
-            attn_output = torch.bmm(nlp_encoder_hidden,
-                                    inputs_embeds.view(nlp_encoder_hidden.shape[0],
-                                                       self.decoder_model.config.hidden_size, -1))
-            voice_projected_embeds = torch.bmm(attn_output, inputs_embeds)
-            mse_loss_fn = torch.nn.MSELoss()
+
             loss_fn = torch.nn.BCEWithLogitsLoss()
-            mse_loss = mse_loss_fn(voice_projected_embeds, nlp_encoder_hidden)
-            loss = mse_loss
+            voice_enc_attn_output = torch.bmm(
+                inputs_embeds.view(inputs_embeds.shape[0], self.decoder_model.config.hidden_size, -1),
+                inputs_embeds.view(inputs_embeds.shape[0], -1, self.decoder_model.config.hidden_size)) \
+                .flatten(start_dim=1)
+            vt_enc_loss = loss_fn(self.discriminator(voice_enc_attn_output).flatten(),
+                                  torch.ones(voice_enc_attn_output.shape[0]).to(self.device))
+
+            nlp_enc_attn_output = torch.bmm(
+                nlp_encoder_hidden.view(nlp_encoder_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                nlp_encoder_hidden.view(nlp_encoder_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
+                .flatten(start_dim=1)
+
+            nt_enc_loss = loss_fn(self.discriminator(nlp_enc_attn_output).flatten(),
+                                  torch.zeros(nlp_enc_attn_output.shape[0]).to(self.device))
 
             voice_attn_output = torch.bmm(
                 voice_hidden.view(voice_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
@@ -191,7 +219,7 @@ class SpeechMixGAN(SpeechMixEED):
                 .flatten(start_dim=1)
 
             vt_loss = loss_fn(self.discriminator(voice_attn_output).flatten(),
-                              torch.zeros(voice_attn_output.shape[0]).to(self.device))
+                              torch.ones(voice_attn_output.shape[0]).to(self.device))
 
             nlp_attn_output = torch.bmm(
                 nlp_hidden.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
@@ -199,9 +227,8 @@ class SpeechMixGAN(SpeechMixEED):
                 .flatten(start_dim=1)
 
             nt_loss = loss_fn(self.discriminator(nlp_attn_output).flatten(),
-                              torch.ones(nlp_attn_output.shape[0]).to(self.device))
-            loss += vt_loss + nt_loss
+                              torch.zeros(nlp_attn_output.shape[0]).to(self.device))
 
-            outputs['loss'] = loss
-
+            loss += vt_loss + nt_loss + nt_enc_loss + vt_enc_loss
+        outputs['loss'] = loss
         return outputs

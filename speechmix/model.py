@@ -167,7 +167,6 @@ class SpeechMixGAN(SpeechMixEED):
         return None
 
     def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
-        decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, device=self.device)
         outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                      output_hidden_states=True,
                                      decoder_input_ids=decoder_input_ids)

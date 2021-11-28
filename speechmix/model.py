@@ -2,7 +2,7 @@ import math
 
 from torch import nn
 from transformers import Wav2Vec2Model, AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
-    Wav2Vec2Processor, HubertModel, UniSpeechSatModel
+    Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel
 import torch
 
 
@@ -28,7 +28,7 @@ class SpeechMixED(nn.Module):
         self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(speech_model_config, nlp_model_config)
         self.model.config.decoder_start_token_id = self.model.config.decoder.decoder_start_token_id
         self.model.config.pad_token_id = self.model.config.decoder.pad_token_id
-        self.processor = Wav2Vec2Processor.from_pretrained(speech_model_config)
+        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         if ftl:
             for name, param in self.model.named_parameters():
@@ -60,11 +60,16 @@ class SpeechMixEED(nn.Module):
         else:
             self.encoder_model = Wav2Vec2Model.from_pretrained(speech_model_config).to(self.device)
         self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(nlp_model_config).to(self.device)
-        self.processor = Wav2Vec2Processor.from_pretrained(speech_model_config)
+        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         # remove last x layer
+        num_nlp_encoder_layers = 0
+        if hasattr(self.decoder_model.base_model.encoder, 'layers'):
+            num_nlp_encoder_layers = len(self.decoder_model.base_model.encoder.layers)
+        elif hasattr(self.decoder_model.base_model.encoder, 'block'):
+            num_nlp_encoder_layers = len(self.decoder_model.base_model.encoder.block)
         self.encoder_model.encoder.layers = self.encoder_model.encoder.layers[
-                                            :-len(self.decoder_model.model.encoder.layers)]
+                                            :-num_nlp_encoder_layers]
         self.enc_to_dec_proj = nn.Linear(self.encoder_model.config.hidden_size,
                                          self.decoder_model.config.hidden_size).to(self.device)
         self.downsize = 8
@@ -93,12 +98,17 @@ class SpeechMixEED(nn.Module):
     def custom_modules(self):
         return None
 
-    def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
-        output = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
-                                    decoder_input_ids=decoder_input_ids, labels=labels)
+    def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
+                 labels=None):
+        if inputs_embeds is not None:
+            output = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
+                                        decoder_input_ids=decoder_input_ids, labels=labels)
+        elif text_input_ids is not None:
+            output = self.decoder_model(input_ids=text_input_ids,
+                                        decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
-    def forward(self, input_values, attention_mask=None, decoder_input_ids=None, labels=None):
+    def forward(self, input_values, text_input_ids=None, attention_mask=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, input_values.shape[0],
                                                           device=self.device)
@@ -122,7 +132,8 @@ class SpeechMixEED(nn.Module):
             pad_length = downsamp_mask.shape[1]
             repad_length = inputs_embeds.shape[1]
             downsamp_mask = torch.nn.ConstantPad1d((0, repad_length - pad_length), 0)(downsamp_mask)
-        outputs = self.cal_loss(inputs_embeds=inputs_embeds, attention_mask=downsamp_mask,
+        outputs = self.cal_loss(inputs_embeds=inputs_embeds, text_input_ids=text_input_ids,
+                                attention_mask=downsamp_mask,
                                 decoder_input_ids=decoder_input_ids, labels=labels)
 
         return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
@@ -133,26 +144,31 @@ class SpeechMixEED(nn.Module):
 
 class SpeechMixSelf(SpeechMixEED):
 
-    def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
+    def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
+                 labels=None):
         if labels is not None:
             labels = labels.to(self.device)
         outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                      decoder_input_ids=decoder_input_ids, labels=labels)
         if labels is not None:
-            nlp_outputs = self.decoder_model(labels, output_hidden_states=True,
-                                             decoder_input_ids=decoder_input_ids)
+            nlp_outputs = self.decoder_model(input_ids=text_input_ids, output_hidden_states=True,
+                                             decoder_input_ids=decoder_input_ids, labels=labels)
             nlp_hidden = nlp_outputs['encoder_hidden_states'][0]
             attn_output = torch.bmm(nlp_hidden,
                                     inputs_embeds.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1))
             voice_projected_embeds = torch.bmm(attn_output, inputs_embeds)
 
             mse_loss_fn = torch.nn.MSELoss()
-            # kld_loss_fn = torch.nn.KLDivLoss()
-            # kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(nlp_outputs.logits, dim=-1),
-            #                        torch.nn.functional.softmax(outputs.logits, dim=-1))
+            kld_loss_fn = torch.nn.KLDivLoss()
+            kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(nlp_outputs.logits, dim=-1),
+                                   torch.nn.functional.softmax(outputs.logits, dim=-1))
             mse_loss = mse_loss_fn(voice_projected_embeds, nlp_hidden)
-            loss = mse_loss + outputs.loss
-            outputs['loss'] = loss
+            loss = mse_loss + outputs.loss + kld_loss
+            outputs['mse_loss'] = mse_loss.mean().item()
+            outputs['kld_loss'] = kld_loss.mean().item()
+            outputs['ce_loss'] = outputs.loss.mean().item()
+            # print(outputs['mse_loss'], outputs['kld_loss'], outputs['ce_loss'])
+            outputs['loss'] = loss.mean()
 
         return outputs
 
@@ -166,7 +182,8 @@ class SpeechMixGAN(SpeechMixEED):
         self.keep_update = 1000
         return None
 
-    def cal_loss(self, inputs_embeds=None, attention_mask=None, decoder_input_ids=None, labels=None):
+    def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
+                 labels=None):
         outputs = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                      output_hidden_states=True,
                                      decoder_input_ids=decoder_input_ids)

@@ -3,6 +3,7 @@ import os
 import sys
 
 import asrp
+from transformers.training_args import ParallelMode
 
 import speechmix
 from datasets import load_dataset, Audio, load_from_disk
@@ -13,12 +14,21 @@ from dataclasses import dataclass
 
 
 def main(arg=None):
-    def prepare_dataset(batch):
+    def prepare_dataset(batch, selftype=False):
         audio = batch["audio"]
         batch["input_values"] = model.processor(audio["array"], sampling_rate=16_000).input_values[0]
         batch["length"] = batch["input_values"].size
         sent = batch["text"] if 'text' in batch else batch["sentence"]
-        batch["labels"] = model.tokenizer(sent).input_ids[1:]
+        sent = sent.lower()
+        gen_input = model.tokenizer(sent, add_special_tokens=False).input_ids
+        if selftype:
+            gen_result = model.decoder_model.generate(torch.tensor([gen_input], device=model.device), num_beams=1)
+            batch["text_input_ids"] = gen_input
+            batch['labels'] = model.tokenizer.batch_decode(gen_result, skip_special_tokens=True)[0]
+            batch['labels'] = model.tokenizer(batch['labels'], add_special_tokens=False).input_ids
+        else:
+            batch['labels'] = gen_input
+        batch['labels'] += [model.tokenizer.eos_token_id]
         batch["input_ids"] = batch["labels"]
         return batch
 
@@ -57,6 +67,7 @@ def main(arg=None):
                 padding=self.padding,
                 max_length=self.max_length,
                 pad_to_multiple_of=self.pad_to_multiple_of,
+                return_attention_mask=True,
                 return_tensors="pt",
             )
 
@@ -68,10 +79,17 @@ def main(arg=None):
                 return_tensors="pt",
             )
 
-            if self.selftype:
-                labels_batch = labels_batch['input_ids']
-            else:
-                labels_batch = labels_batch['input_ids'].masked_fill(labels_batch.attention_mask.ne(1), -100)
+            if 'text_input_ids' in features[0]:
+                text_features = [{"input_ids": feature['text_input_ids']} for feature in features]
+                text_batch = self.tokenizer.pad(
+                    text_features,
+                    padding=self.padding,
+                    max_length=self.max_length_labels,
+                    pad_to_multiple_of=self.pad_to_multiple_of_labels,
+                    return_tensors="pt",
+                )
+                batch['text_input_ids'] = text_batch['input_ids']
+            labels_batch = labels_batch['input_ids'].masked_fill(labels_batch.attention_mask.ne(1), -100)
             batch['labels'] = labels_batch
             return batch
 
@@ -114,7 +132,8 @@ def main(arg=None):
                                        lna=input_arg['lna'], lnae=input_arg['lnae'], fne=input_arg['fne'])
     elif input_arg['SpeechMixSelf']:
         model_type = "SpeechMixSelf"
-        model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'])
+        model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'],
+                                        lna=input_arg['lna'], lnae=input_arg['lnae'], fne=input_arg['fne'])
     elif input_arg['SpeechMixGAN']:
         model_type = "SpeechMixGAN"
         model = speechmix.SpeechMixGAN(input_arg['speech_model_config'], input_arg['nlp_model_config'])
@@ -124,7 +143,7 @@ def main(arg=None):
             model_type += "_ftl"
         model = speechmix.SpeechMixED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                       ftl=input_arg['ftl'])
-
+    selftype = (model_type == 'SpeechMixSelf' or model_type == 'SpeechMixGAN')
     cache_path_train = f'./train_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
     cache_path_valid = f'./valid_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
 
@@ -138,14 +157,14 @@ def main(arg=None):
         train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
         valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-        train_ds = train_ds.map(prepare_dataset, num_proc=1, )
-        valid_ds = valid_ds.map(prepare_dataset, num_proc=1, )
+        train_ds = train_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
+        valid_ds = valid_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
 
         train_ds.save_to_disk(cache_path_train)
         valid_ds.save_to_disk(cache_path_valid)
 
     data_collator = DataCollatorWithPadding(processor=model.processor, tokenizer=model.tokenizer, padding=True,
-                                            selftype=(model_type == 'SpeechMixSelf' or model_type == 'SpeechMixGAN'))
+                                            selftype=selftype)
 
     training_args = TrainingArguments(
         output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}",
@@ -157,14 +176,15 @@ def main(arg=None):
         group_by_length=True,
         load_best_model_at_end=True,
         num_train_epochs=1000,
-        fp16=True,
-        save_steps=500,
-        eval_steps=500,
+        save_steps=700,
+        eval_steps=700,
         logging_steps=100,
-        learning_rate=6e-4,
+        learning_rate=3e-3,
         warmup_steps=500,
         save_total_limit=2,
         dataloader_num_workers=10,
+        max_grad_norm=5,
+        # report_to="none",
     )
     # some trainer problem - save all logistics on compute_metrics, cause out of memory, fix:argmax first;
     # dynamic padding on past key value, cause index error, fix: return only loss and logist
@@ -177,7 +197,7 @@ def main(arg=None):
         eval_dataset=valid_ds,
         data_collator=data_collator,
         tokenizer=model.tokenizer,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=20)]
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=20)],
     )
 
     trainer.train()

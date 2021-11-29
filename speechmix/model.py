@@ -153,7 +153,7 @@ class SpeechMixSelf(SpeechMixEED):
         if labels is not None:
             nlp_outputs = self.decoder_model(input_ids=text_input_ids, output_hidden_states=True,
                                              decoder_input_ids=decoder_input_ids, labels=labels)
-            nlp_hidden = nlp_outputs['encoder_hidden_states'][0]
+            nlp_hidden = nlp_outputs['encoder_hidden_states'][-1]
             attn_output = torch.bmm(nlp_hidden,
                                     inputs_embeds.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1))
             voice_projected_embeds = torch.bmm(attn_output, inputs_embeds)

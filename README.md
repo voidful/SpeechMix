@@ -114,3 +114,7 @@ usage:
 `python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixSelf  --dataset common_voice --field en --train_split train --test_split test --batch 5 --grad_accum 8`   
 
 `python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixEED --lna --dataset patrickvonplaten/librispeech_asr_dummy --field clean --train_split validation --test_split test --batch 3 --grad_accum 4`
+
+`python train.py --speech_model_config microsoft/unispeech-sat-large --nlp_model_config bigscience/T0_3B --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 9 --grad_accum 3`
+
+`python -m torch.distributed.launch --nproc_per_node=2 train.py --speech_model_config microsoft/unispeech-sat-large --nlp_model_config bigscience/T0_3B --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 6 --fne`

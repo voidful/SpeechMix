@@ -1,5 +1,7 @@
 import argparse
+import math
 import os
+import re
 import sys
 
 import asrp
@@ -7,13 +9,49 @@ import asrp
 import speechmix
 from datasets import load_dataset, Audio, load_from_disk
 import torch
-from transformers import Wav2Vec2Processor, Trainer, TrainingArguments, EarlyStoppingCallback
+from transformers import Wav2Vec2Processor, Trainer, TrainingArguments, EarlyStoppingCallback, TrainerCallback, \
+    TrainerState, TrainerControl
 from typing import Dict, List, Union, Optional
 from dataclasses import dataclass
 from datasets import set_caching_enabled
 
 set_caching_enabled(False)
 
+
+# class FreezingCallback(TrainerCallback):
+#     """Callback to gradually unfreeze the model according to a freezing :class:`Schedule` during training. It ensures that the model is always completely unfrozen before saving it to avoid unexpected behaviour."""
+#
+#     def __init__(self, freezing_schedule: Schedule, trainer: Trainer, model_config):
+#         self.model_config = model_config
+#         self.trainer = trainer
+#         self.freezing_schedule = freezing_schedule
+#         self.current_step_idx = 0
+#
+#     def on_epoch_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+#         if state.epoch >= self.freezing_schedule.schedule[self.current_step_idx][1]:
+#             self.current_step_idx += 1
+#             self.freeze_model(self.freezing_schedule.schedule[self.current_step_idx][0],
+#                               self.model_config.n_layer, int(state.epoch))
+#
+#     def on_save(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+#         for name, param in self.trainer.model.named_parameters():
+#             param.requires_grad = True
+#
+#     def freeze_model(self, freeze_to: int, highest_layer: int, epoch: int):
+#         print(f"\nEpoch {epoch}: Freezing model to layer {freeze_to} of {highest_layer} layers.")
+#
+#         for name, param in self.trainer.model.named_parameters():
+#             # find out the number of every layer. GPT2-specific!
+#             try:
+#                 layer_number = int(re.search(r'\.h\.\d+\.', name).group().strip(".h"))
+#             except AttributeError:
+#                 layer_number = math.inf
+#             # freeze all layers up to layer freeze_to including embedding layers
+#             if '.wte.' in name or '.wpe.' in name or layer_number <= freeze_to:
+#                 param.requires_grad = False
+# https://discuss.huggingface.co/t/gradual-layer-freezing/3381/4
+# freezing_callback = FreezingCallback(freezing_schedule, trainer, config)
+# trainer.add_callback(freezing_callback)
 
 def main(arg=None):
     def prepare_dataset(batch, selftype=False):
@@ -37,9 +75,8 @@ def main(arg=None):
                     if model.decoder_model.config.eos_token_id == max_item:
                         break
                     predicted.append(max_item)
-                model.decoder_model.train()
             batch["text_input_ids"] = gen_input
-            batch['labels'] = predicted
+            batch['labels'] = predicted[1:]
         else:
             batch['labels'] = gen_input
         batch['labels'] += [model.tokenizer.eos_token_id]
@@ -106,6 +143,7 @@ def main(arg=None):
                 batch['text_input_ids'] = text_batch['input_ids']
             labels_batch = labels_batch['input_ids'].masked_fill(labels_batch.attention_mask.ne(1), -100)
             batch['labels'] = labels_batch
+            torch.cuda.empty_cache()
             return batch
 
     def parse_args(args):
@@ -129,7 +167,6 @@ def main(arg=None):
         parser.add_argument("--ftl", action='store_true')
         parser.add_argument("--lna", action='store_true')
         parser.add_argument("--lnae", action='store_true')
-        parser.add_argument("--fne", action='store_true')
         parser.add_argument("--fp16", action='store_true')
         parser.add_argument("--remove_layer", type=int)
         parser.add_argument("--wandb", action='store_true')
@@ -146,13 +183,11 @@ def main(arg=None):
         model_type = "SpeechMixEED"
         model = speechmix.SpeechMixEED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                        lna=input_arg.get('lna', False), lnae=input_arg.get('lnae', False),
-                                       fne=input_arg.get('fne', False),
                                        remove_layers=input_arg.get("remove_layer", None))
     elif input_arg['SpeechMixSelf']:
         model_type = "SpeechMixSelf"
         model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                         lna=input_arg.get('lna', False), lnae=input_arg.get('lnae', False),
-                                        fne=input_arg.get('fne', False),
                                         remove_layers=input_arg.get("remove_layer", None))
     elif input_arg['SpeechMixGAN']:
         model_type = "SpeechMixGAN"
@@ -172,14 +207,11 @@ def main(arg=None):
         model_type += "_lna"
     elif input_arg['lnae']:
         model_type += "_lnae"
-    elif input_arg['fne']:
-        model_type += "_fne"
 
     selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
     cache_path_train = f'./train_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
     cache_path_valid = f'./valid_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
-
-    if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid) and False:
+    if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
         train_ds = load_from_disk(cache_path_train)
         valid_ds = load_from_disk(cache_path_valid)
     else:
@@ -199,7 +231,7 @@ def main(arg=None):
                                             selftype=selftype)
 
     training_args = TrainingArguments(
-        output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}_{input_arg['notes']}",
+        output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}_{input_arg.get('notes', '')}",
         per_device_train_batch_size=int(input_arg['batch']),
         per_device_eval_batch_size=int(input_arg['batch']),
         gradient_accumulation_steps=int(input_arg['grad_accum']),
@@ -208,10 +240,10 @@ def main(arg=None):
         group_by_length=True,
         fp16=input_arg.get('fp16', False),
         load_best_model_at_end=True,
-        num_train_epochs=input_arg.get('epoch', 500),
+        num_train_epochs=input_arg.get('epoch', 60),
         save_steps=input_arg.get('eval_step', 700),
         eval_steps=input_arg.get('eval_step', 700),
-        logging_steps=100,
+        logging_steps=10,
         learning_rate=5e-4,
         warmup_steps=500,
         save_total_limit=2,

@@ -103,6 +103,8 @@ usage:
 
 `python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixEED --fne --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 8`    
 
+`python train.py --speech_model_config voidful/wav2vec2-large-xlsr-53-tw-gpt --nlp_model_config voidful/bart-base-chinese --SpeechMixEED --lna --dataset common_voice --field zh-TW --train_split train --test_split test --batch 3 --grad_accum 8`
+
 `python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixED --dataset librispeech_asr --field other --train_split train.500 --test_split validation --batch 3 --grad_accum 8`    
 
 `python train.py --speech_model_config facebook/wav2vec2-large-robust-ft-libri-960h --nlp_model_config facebook/mbart-large-50-one-to-many-mmt --SpeechMixED --ftl --dataset librispeech_asr --field other --train_split train.500 --test_split validation --batch 3 --grad_accum 8`   
@@ -117,4 +119,4 @@ usage:
 
 `python train.py --speech_model_config microsoft/unispeech-sat-large --nlp_model_config bigscience/T0_3B --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 9 --grad_accum 3`
 
-`python -m torch.distributed.launch --nproc_per_node=2 train.py --speech_model_config microsoft/unispeech-sat-large --nlp_model_config bigscience/T0_3B --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 6 --fne`
+`python -m torch.distributed.launch --nproc_per_node=2 train.py --speech_model_config microsoft/unispeech-sat-large --nlp_model_config bigscience/T0_3B --SpeechMixSelf  --dataset librispeech_asr --field clean --train_split train.100 --test_split validation --batch 3 --grad_accum 12 --fne --wandb`

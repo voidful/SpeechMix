@@ -1,6 +1,7 @@
 import math
 
 from torch import nn
+import torch.nn.functional as F
 from transformers import Wav2Vec2Model, AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
     Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel
 import torch
@@ -50,15 +51,16 @@ class SpeechMixED(nn.Module):
 
 
 class SpeechMixEED(nn.Module):
-    def __init__(self, speech_model_config, nlp_model_config, lnae=False, lna=False, fne=True, remove_layers=None):
+    def __init__(self, speech_model_config, nlp_model_config, lnae=False, lna=False, remove_layers=None):
         super(SpeechMixEED, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if 'hubert' in speech_model_config:
-            self.encoder_model = HubertModel.from_pretrained(speech_model_config)
+            self.encoder_model = HubertModel
         elif 'unispeech' in speech_model_config:
-            self.encoder_model = UniSpeechSatModel.from_pretrained(speech_model_config)
+            self.encoder_model = UniSpeechSatModel
         else:
-            self.encoder_model = Wav2Vec2Model.from_pretrained(speech_model_config).to(self.device)
+            self.encoder_model = Wav2Vec2Model
+        self.encoder_model = self.encoder_model.from_pretrained(speech_model_config).to(self.device)
         self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(nlp_model_config).to(self.device)
         self.processor = Wav2Vec2FeatureExtractor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
@@ -77,16 +79,23 @@ class SpeechMixEED(nn.Module):
         self.encoder_model.encoder.layers = self.encoder_model.encoder.layers[
                                             :len(self.encoder_model.encoder.layers) - remove_layers]
         self.num_speech_encoder_layers = len(self.encoder_model.encoder.layers)
+
         self.enc_to_dec_proj = nn.Linear(self.encoder_model.config.hidden_size,
-                                         self.decoder_model.config.hidden_size).to(self.device)
+                                         self.decoder_model.config.hidden_size)
+
         self.downsize = 8
         self.downloop = int(math.log(self.downsize, 2))
-        self.length_adapters = nn.ModuleList([nn.Conv1d(in_channels=self.encoder_model.config.hidden_size,
-                                                        out_channels=self.encoder_model.config.hidden_size,
-                                                        kernel_size=2,
-                                                        stride=2).to(self.device)] * self.downloop)
+        self.length_adapters = nn.Sequential(*[nn.Conv1d(in_channels=self.encoder_model.config.hidden_size,
+                                                         out_channels=self.encoder_model.config.hidden_size,
+                                                         kernel_size=2,
+                                                         stride=2).to(self.device) for _ in range(self.downloop)])
+
+        self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers + 1))
+
         self.custom_modules()
         if lna or lnae:
+            self.encoder_model.eval()
+            self.decoder_model.eval()
             for xcoder in [self.encoder_model.named_parameters, self.decoder_model.named_parameters]:
                 for name, param in xcoder():
                     if param.requires_grad:
@@ -97,15 +106,6 @@ class SpeechMixEED(nn.Module):
                             param.requires_grad = True
                         else:
                             param.requires_grad = False
-        elif fne:
-            for name, param in self.encoder_model.named_parameters():
-                if param.requires_grad:
-                    if 'feature_extractor' in name:
-                        param.requires_grad = False
-            for name, param in self.decoder_model.named_parameters():
-                if param.requires_grad:
-                    param.requires_grad = False
-            self.decoder_model.eval()
         for name, p in self.named_parameters():
             print(name, p.requires_grad)
 
@@ -129,10 +129,18 @@ class SpeechMixEED(nn.Module):
         elif decoder_input_ids is None and labels is not None:
             decoder_input_ids = shift_tokens_right(labels, self.decoder_model.config.pad_token_id,
                                                    self.decoder_model.config.decoder_start_token_id)
-        encoder_outputs = self.encoder_model(input_values=input_values, attention_mask=attention_mask)
-        inputs_embeds = encoder_outputs['last_hidden_state']
-        for loop in range(self.downloop):
-            inputs_embeds = self.length_adapters[loop](inputs_embeds.transpose(1, 2)).transpose(1, 2)
+        encoder_outputs = self.encoder_model(input_values=input_values, attention_mask=attention_mask,
+                                             output_hidden_states=True)
+        inputs_embeds = encoder_outputs['hidden_states'][-1]
+        # weighted sum
+        # stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
+        # _, *origin_shape = stacked_feature.shape
+        # stacked_feature = stacked_feature.view(self.num_speech_encoder_layers + 1, -1)
+        # norm_weights = F.softmax(self.weights_sum, dim=-1)
+        # weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+        # inputs_embeds = weighted_feature.view(*origin_shape)
+
+        inputs_embeds = self.length_adapters(inputs_embeds.transpose(1, 2)).transpose(1, 2)
         inputs_embeds = self.enc_to_dec_proj(inputs_embeds)
 
         downsamp_mask = None
@@ -171,10 +179,6 @@ class SpeechMixAdapt(SpeechMixEED):
             for name, param in encoder_parameter.named_parameters():
                 if param.requires_grad:
                     param.requires_grad = False
-        for decoder_parameter in decoder_stack:
-            for name, param in decoder_parameter.named_parameters():
-                if param.requires_grad:
-                    param.requires_grad = False
 
         embshape = self.decoder_model.config.d_model
         bottleneck = int(embshape / 2)
@@ -190,6 +194,32 @@ class SpeechMixAdapt(SpeechMixEED):
 
 class SpeechMixSelf(SpeechMixEED):
 
+    def custom_modules(self):
+        self.encoder_model.eval()
+        self.decoder_model.eval()
+
+        for name, param in self.encoder_model.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+
+        for name, param in self.decoder_model.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+
+        for name, param in self.encoder_model.base_model.named_parameters():
+            if any([k in name for k in ["layer_norm", "layernorm_embedding", "attention"]]):
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+
+        # embshape = self.encoder_model.config.hidden_size
+        # bottleneck = int(embshape / 2)
+        # self.adapters = nn.ModuleList([nn.Sequential(nn.LayerNorm(embshape), nn.Linear(embshape, bottleneck), nn.ReLU(),
+        #                                              nn.Linear(bottleneck, embshape)) for _ in
+        #                                range(len(self.encoder_model.base_model.encoder.layers))])
+        # for l_i, l in enumerate(self.encoder_model.base_model.encoder.layers):
+        #     l.register_forward_hook(lambda m, i, o: (self.adapters[l_i](o[0]), o[1:]))
+
     def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
                  labels=None):
         if labels is not None:
@@ -201,23 +231,23 @@ class SpeechMixSelf(SpeechMixEED):
         if labels is not None:
             nlp_outputs = self.decoder_model(input_ids=text_input_ids, output_hidden_states=True,
                                              decoder_input_ids=decoder_input_ids, labels=labels)
+
             nlp_hidden = nlp_outputs['encoder_hidden_states'][-1]
             speech_hidden = outputs['encoder_hidden_states'][-1]
             attn_output = torch.bmm(nlp_hidden,
                                     speech_hidden.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1))
+            softmax = torch.nn.Softmax(dim=-1)
+            attn_output = softmax(attn_output / math.sqrt(self.decoder_model.config.hidden_size))
             voice_projected_embeds = torch.bmm(attn_output, speech_hidden)
-
             mse_loss_fn = torch.nn.MSELoss()
+            mse_loss = mse_loss_fn(voice_projected_embeds, nlp_hidden)
+
             kld_loss_fn = torch.nn.KLDivLoss(reduction='batchmean')
             kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(outputs.logits, dim=-1),
                                    torch.nn.functional.softmax(nlp_outputs.logits, dim=-1))
-            mse_loss = mse_loss_fn(voice_projected_embeds, nlp_hidden)
-            loss = outputs.loss + mse_loss + kld_loss
-            # + outputs.loss
-            outputs['mse_loss'] = mse_loss.mean().item()
-            outputs['kld_loss'] = kld_loss.mean().item()
-            outputs['ce_loss'] = outputs.loss.mean().item()
-            # print(outputs['mse_loss'], outputs['kld_loss'], outputs['ce_loss'])
+            loss = kld_loss + outputs.loss + mse_loss
+
+            # print(outputs['mse_loss'].mean().item(), outputs['kld_loss'].mean().item(), outputs['ce_loss'].mean().item())
             outputs['loss'] = loss.mean()
 
         return outputs

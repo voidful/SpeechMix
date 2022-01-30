@@ -31,6 +31,7 @@ class SpeechMixED(nn.Module):
         self.model.config.pad_token_id = self.model.config.decoder.pad_token_id
         self.processor = Wav2Vec2FeatureExtractor.from_pretrained(speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
+        self.model.freeze_feature_encoder()
         if ftl:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
@@ -42,6 +43,7 @@ class SpeechMixED(nn.Module):
     def forward(self, input_values, attention_mask=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.model.config.decoder, device=self.device)
+        # print("decoder_input_ids", decoder_input_ids, labels)
         outputs = self.model(input_values=input_values, attention_mask=attention_mask,
                              decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
@@ -132,7 +134,7 @@ class SpeechMixEED(nn.Module):
         encoder_outputs = self.encoder_model(input_values=input_values, attention_mask=attention_mask,
                                              output_hidden_states=True)
         inputs_embeds = encoder_outputs['hidden_states'][-1]
-        # weighted sum
+        # # weighted sum
         # stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
         # _, *origin_shape = stacked_feature.shape
         # stacked_feature = stacked_feature.view(self.num_speech_encoder_layers + 1, -1)
@@ -161,6 +163,17 @@ class SpeechMixEED(nn.Module):
         if 'loss' in outputs:
             return_dict['loss'] = outputs['loss']
         return return_dict
+
+
+class SpeechMixFixed(SpeechMixEED):
+
+    def custom_modules(self):
+        self.encoder_model.eval()
+        self.decoder_model.eval()
+
+        for name, param in self.decoder_model.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = False
 
 
 class SpeechMixAdapt(SpeechMixEED):
@@ -198,19 +211,19 @@ class SpeechMixSelf(SpeechMixEED):
         self.encoder_model.eval()
         self.decoder_model.eval()
 
-        for name, param in self.encoder_model.named_parameters():
-            if param.requires_grad:
-                param.requires_grad = False
+        # for name, param in self.encoder_model.named_parameters():
+        #     if param.requires_grad:
+        #         param.requires_grad = False
 
         for name, param in self.decoder_model.named_parameters():
             if param.requires_grad:
                 param.requires_grad = False
 
-        for name, param in self.encoder_model.base_model.named_parameters():
-            if any([k in name for k in ["layer_norm", "layernorm_embedding", "attention"]]):
-                param.requires_grad = True
-            else:
-                param.requires_grad = False
+        # for name, param in self.encoder_model.base_model.named_parameters():
+        #     if any([k in name for k in ["layer_norm", "layernorm_embedding", "attention"]]):
+        #         param.requires_grad = True
+        #     else:
+        #         param.requires_grad = False
 
         # embshape = self.encoder_model.config.hidden_size
         # bottleneck = int(embshape / 2)

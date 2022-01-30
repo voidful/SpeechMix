@@ -60,27 +60,29 @@ def main(arg=None):
         batch["length"] = batch["input_values"].size
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
-        gen_input = model.tokenizer(sent, add_special_tokens=True).input_ids
-        if selftype:
-            predicted = [model.decoder_model.config.decoder_start_token_id]
-            with torch.no_grad():
-                model.decoder_model.eval()
-                for _ in range(model.decoder_model.config.max_length):
-                    max_item = torch.argmax(
-                        model.decoder_model(input_ids=torch.tensor([gen_input], device=model.device),
-                                            output_hidden_states=True,
-                                            decoder_input_ids=torch.tensor(
-                                                [predicted],
-                                                device=model.device)).logits, -1)[:, -1].item()
-                    if model.decoder_model.config.eos_token_id == max_item:
-                        break
-                    predicted.append(max_item)
-            batch["text_input_ids"] = gen_input
-            batch['labels'] = predicted[1:]
-        else:
-            batch['labels'] = gen_input
-        batch['labels'] += [model.tokenizer.eos_token_id]
-        batch["input_ids"] = batch["labels"]
+        gen_input = model.tokenizer(sent).input_ids
+        # , add_special_tokens = True
+        # if selftype:
+        #     predicted = [model.decoder_model.config.decoder_start_token_id]
+        #     with torch.no_grad():
+        #         model.decoder_model.eval()
+        #         for _ in range(model.decoder_model.config.max_length):
+        #             max_item = torch.argmax(
+        #                 model.decoder_model(input_ids=torch.tensor([gen_input], device=model.device),
+        #                                     output_hidden_states=True,
+        #                                     decoder_input_ids=torch.tensor(
+        #                                         [predicted],
+        #                                         device=model.device)).logits, -1)[:, -1].item()
+        #             if model.decoder_model.config.eos_token_id == max_item:
+        #                 break
+        #             predicted.append(max_item)
+        #     batch["text_input_ids"] = gen_input
+        #     batch['labels'] = predicted[1:]
+        # else:
+        #     batch['labels'] = gen_input
+        # batch['labels'] += [model.tokenizer.eos_token_id]
+        # batch["input_ids"] = batch["labels"]
+        batch['labels'] = gen_input
         return batch
 
     def compute_metrics(pred):
@@ -155,12 +157,14 @@ def main(arg=None):
         parser.add_argument("--SpeechMixSelf", action='store_true')
         parser.add_argument("--SpeechMixAdapt", action='store_true')
         parser.add_argument("--SpeechMixGAN", action='store_true')
+        parser.add_argument("--SpeechMixFixed", action='store_true')
         parser.add_argument("--dataset", type=str)
         parser.add_argument("--field", type=str)
         parser.add_argument("--train_split", type=str)
         parser.add_argument("--test_split", type=str)
         parser.add_argument("--notes", type=str)
-        parser.add_argument("--grad_accum", default=3, type=str)
+        parser.add_argument("--grad_accum", default=3, type=int)
+        parser.add_argument("--worker", default=10, type=int)
         parser.add_argument("--batch", type=int)
         parser.add_argument("--epoch", default=1000, type=int)
         parser.add_argument("--eval_step", default=700, type=int)
@@ -184,6 +188,11 @@ def main(arg=None):
         model = speechmix.SpeechMixEED(input_arg['speech_model_config'], input_arg['nlp_model_config'],
                                        lna=input_arg.get('lna', False), lnae=input_arg.get('lnae', False),
                                        remove_layers=input_arg.get("remove_layer", None))
+    elif input_arg['SpeechMixFixed']:
+        model_type = "SpeechMixFixed"
+        model = speechmix.SpeechMixFixed(input_arg['speech_model_config'], input_arg['nlp_model_config'],
+                                         lna=input_arg.get('lna', False), lnae=input_arg.get('lnae', False),
+                                         remove_layers=input_arg.get("remove_layer", None))
     elif input_arg['SpeechMixSelf']:
         model_type = "SpeechMixSelf"
         model = speechmix.SpeechMixSelf(input_arg['speech_model_config'], input_arg['nlp_model_config'],
@@ -211,7 +220,7 @@ def main(arg=None):
     selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
     cache_path_train = f'./train_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
     cache_path_valid = f'./valid_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
-    if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
+    if False and os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
         train_ds = load_from_disk(cache_path_train)
         valid_ds = load_from_disk(cache_path_valid)
     else:
@@ -240,14 +249,14 @@ def main(arg=None):
         group_by_length=True,
         fp16=input_arg.get('fp16', False),
         load_best_model_at_end=True,
-        num_train_epochs=input_arg.get('epoch', 60),
+        num_train_epochs=input_arg.get('epoch', 10),
         save_steps=input_arg.get('eval_step', 700),
         eval_steps=input_arg.get('eval_step', 700),
         logging_steps=10,
         learning_rate=5e-4,
         warmup_steps=500,
         save_total_limit=2,
-        dataloader_num_workers=10,
+        dataloader_num_workers=input_arg.get('worker', 10),
         max_grad_norm=5,
         report_to="wandb" if input_arg.get('wandb', True) else "none",
     )

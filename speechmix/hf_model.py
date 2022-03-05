@@ -2,9 +2,8 @@ import math
 
 from torch import nn
 from transformers import AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
-    Wav2Vec2FeatureExtractor
+    Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel, Wav2Vec2Model
 import torch
-import s3prl.hub as hub
 import torch.nn.functional as F
 
 
@@ -23,11 +22,11 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-class SpeechMixED(nn.Module):
+class HFSpeechMixED(nn.Module):
     def __init__(self, speech_model_config, nlp_model_config, fixed_parameters=False,
                  fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                "layernorm_embedding", 'attention', 'encoder'], **kwargs):
-        super(SpeechMixED, self).__init__()
+        super(HFSpeechMixED, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(speech_model_config, nlp_model_config)
         self.model.config.decoder_start_token_id = self.model.config.decoder.decoder_start_token_id
@@ -54,15 +53,21 @@ class SpeechMixED(nn.Module):
         return return_dict
 
 
-class SpeechMixEED(nn.Module):
+class HFSpeechMixEED(nn.Module):
     def __init__(self, speech_model_config, nlp_model_config, share_layer_ratio=0,
                  down_scale=8, weighted_sum=False,
                  fixed_parameters=False,
                  fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                "layernorm_embedding", 'attention', 'encoder'], **kwargs):
-        super(SpeechMixEED, self).__init__()
+        super(HFSpeechMixEED, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.encoder_model = getattr(hub, speech_model_config)().to(self.device)
+        if 'hubert' in speech_model_config:
+            self.encoder_model = HubertModel
+        elif 'unispeech' in speech_model_config:
+            self.encoder_model = UniSpeechSatModel
+        else:
+            self.encoder_model = Wav2Vec2Model
+        self.encoder_model = self.encoder_model.from_pretrained(speech_model_config).to(self.device)
         self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(nlp_model_config).to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         self.weighted_sum = weighted_sum
@@ -73,32 +78,32 @@ class SpeechMixEED(nn.Module):
         elif hasattr(self.decoder_model.base_model.encoder, 'block'):
             num_nlp_encoder_layers = len(self.decoder_model.base_model.encoder.block)
 
-        print("Before layer sharing num_speech_encoder_layers", len(self.encoder_model.model.encoder.layers))
+        print("Before layer sharing num_speech_encoder_layers", len(self.encoder_model.encoder.layers))
         remove_layers = int(
-            len(self.encoder_model.model.encoder.layers) * share_layer_ratio) if share_layer_ratio != 0 else 0
-        self.encoder_model.model.encoder.layers = self.encoder_model.model.encoder.layers[
-                                                  :len(self.encoder_model.model.encoder.layers) - remove_layers]
-        self.num_speech_encoder_layers = len(self.encoder_model.model.encoder.layers)
+            len(self.encoder_model.encoder.layers) * share_layer_ratio) if share_layer_ratio != 0 else 0
+        self.encoder_model.encoder.layers = self.encoder_model.encoder.layers[
+                                            :len(self.encoder_model.encoder.layers) - remove_layers]
+        self.num_speech_encoder_layers = len(self.encoder_model.encoder.layers)
         print("After layer sharing ",
-              "num_speech_encoder_layers", len(self.encoder_model.model.encoder.layers),
+              "num_speech_encoder_layers", len(self.encoder_model.encoder.layers),
               "num_nlp_encoder_layers", num_nlp_encoder_layers,
               "share_layer_ratio", share_layer_ratio,
-              "remove_layers", remove_layers, )
+              "remove_layers", remove_layers)
 
         # Downsample
         self.downsize = down_scale
         self.downloop = int(math.log(self.downsize, 2))
         if self.downsize > 1:
             self.length_adapters = nn.Sequential(
-                *[nn.Conv1d(in_channels=self.encoder_model.model.final_proj.in_features,
-                            out_channels=self.encoder_model.model.final_proj.in_features,
+                *[nn.Conv1d(in_channels=self.encoder_model.config.hidden_size,
+                            out_channels=self.encoder_model.config.hidden_size,
                             kernel_size=2,
                             stride=2) for _ in range(self.downloop)]).to(self.device)
         else:
             self.length_adapters = nn.Sequential(nn.Identity()).to(self.device)
 
-        self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers)).to(self.device)
-        self.enc_to_dec_proj = nn.Linear(self.encoder_model.model.final_proj.in_features,
+        self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers + 1)).to(self.device)
+        self.enc_to_dec_proj = nn.Linear(self.encoder_model.config.hidden_size,
                                          self.decoder_model.config.hidden_size).to(self.device)
         self.custom_modules(**kwargs)
         if fixed_parameters:
@@ -120,7 +125,7 @@ class SpeechMixEED(nn.Module):
             else:
                 list_no_grad.append(name)
 
-        self.speech_encoder_layer = len(self.encoder_model.model.encoder.layers)
+        self.speech_encoder_layer = len(self.encoder_model.encoder.layers)
         self.nlp_encoder_layer = num_nlp_encoder_layers
         self.list_grad = list_grad
         self.list_no_grad = list_no_grad
@@ -147,13 +152,13 @@ class SpeechMixEED(nn.Module):
             decoder_input_ids = shift_tokens_right(labels, self.decoder_model.config.pad_token_id,
                                                    self.decoder_model.config.decoder_start_token_id)
         return_dict = {}
-        encoder_outputs = self.encoder_model(input_values)
-        inputs_embeds = encoder_outputs['last_hidden_state'].to(self.device)
+        encoder_outputs = self.encoder_model(torch.stack((input_values)), output_hidden_states=True)
+        inputs_embeds = encoder_outputs['hidden_states'][-1].to(self.device)
         if self.weighted_sum:
             # weighted sum
             stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
             _, *origin_shape = stacked_feature.shape
-            stacked_feature = stacked_feature.view(self.num_speech_encoder_layers, -1)
+            stacked_feature = stacked_feature.view(self.num_speech_encoder_layers + 1, -1)
             norm_weights = F.softmax(self.weights_sum, dim=-1)
             if return_model_detail:
                 return_dict['weighted_sum'] = norm_weights
@@ -175,7 +180,7 @@ class SpeechMixEED(nn.Module):
         return return_dict
 
 
-class SpeechMixFixed(SpeechMixEED):
+class HFSpeechMixFixed(HFSpeechMixEED):
 
     def custom_modules(self, fixed_speech=False, fixed_nlp=True, **kwargs):
         print(fixed_speech, fixed_nlp, kwargs)
@@ -191,7 +196,7 @@ class SpeechMixFixed(SpeechMixEED):
                     param.requires_grad = False
 
 
-class SpeechMixAdapter(SpeechMixEED):
+class HFSpeechMixAdapter(HFSpeechMixEED):
 
     def custom_modules(self, **kwargs):
         self.encoder_model.eval()
@@ -220,7 +225,7 @@ class SpeechMixAdapter(SpeechMixEED):
                 l.register_forward_hook(lambda m, i, o: (self.adapters[s_i * len(s) + l_i](o[0]), o[1:]))
 
 
-class SpeechMixSelf(SpeechMixEED):
+class HFSpeechMixSelf(HFSpeechMixEED):
 
     def custom_modules(self, **kwargs):
         self.encoder_model.eval()
@@ -281,7 +286,7 @@ class SpeechMixSelf(SpeechMixEED):
         return outputs
 
 
-class SpeechMixGAN(SpeechMixEED):
+class HFSpeechMixGAN(HFSpeechMixEED):
 
     def custom_modules(self, **kwargs):
         self.discriminator = nn.Linear(self.decoder_model.config.hidden_size ** 2, 1).to(self.device)

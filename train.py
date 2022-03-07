@@ -139,13 +139,13 @@ def main(arg=None):
         parser.add_argument("--SpeechMixEED", action='store_true')
         parser.add_argument("--SpeechMixED", action='store_true')
         parser.add_argument("--SpeechMixSelf", action='store_true')
-        parser.add_argument("--SpeechMixAdapt", action='store_true')
+        parser.add_argument("--SpeechMixAdapter", action='store_true')
         parser.add_argument("--SpeechMixGAN", action='store_true')
         parser.add_argument("--SpeechMixFixed", action='store_true')
         parser.add_argument("--HFSpeechMixEED", action='store_true')
         parser.add_argument("--HFSpeechMixED", action='store_true')
         parser.add_argument("--HFSpeechMixSelf", action='store_true')
-        parser.add_argument("--HFSpeechMixAdapt", action='store_true')
+        parser.add_argument("--HFSpeechMixAdapter", action='store_true')
         parser.add_argument("--HFSpeechMixGAN", action='store_true')
         parser.add_argument("--HFSpeechMixFixed", action='store_true')
         parser.add_argument("--dataset", type=str)
@@ -155,9 +155,10 @@ def main(arg=None):
         parser.add_argument("--notes", type=str)
         parser.add_argument("--grad_accum", default=3, type=int)
         parser.add_argument("--logging_steps", default=10, type=int)
-        parser.add_argument("--warmup_steps", default=10, type=int)
+        parser.add_argument("--warmup_steps", default=500, type=int)
+        parser.add_argument("--unfreeze_warmup_steps", default=1000, type=int)
         parser.add_argument("--save_total_limit", default=2, type=int)
-        # parser.add_argument("--max_grad_norm", default=10, type=int)
+        parser.add_argument("--max_grad_norm", default=10, type=int)
         parser.add_argument("--worker", default=10, type=int)
         parser.add_argument("--batch", type=int)
         parser.add_argument("--epoch", default=1000, type=int)
@@ -173,60 +174,60 @@ def main(arg=None):
         parser.add_argument("--fp16", action='store_true')
         parser.add_argument("--wandb", action='store_true')
 
-        input_arg, model_arg = parser.parse_known_args(args)
-        input_arg = {k: v for k, v in vars(input_arg).items() if v is not None}
+        input_args, model_arg = parser.parse_known_args(args)
+        input_args = {k: v for k, v in vars(input_args).items() if v is not None}
         other_arg = {k.replace("--", ""): v for k, v in zip(model_arg[:-1:2], model_arg[1::2])}
-        return input_arg, other_arg
+        return input_args, other_arg
 
-    input_arg, other_arg = parse_args(sys.argv[1:]) if arg is None else parse_args(arg)
-    print("input_arg", input_arg)
-    if input_arg['SpeechMixEED']:
+    input_args, other_arg = parse_args(sys.argv[1:]) if arg is None else parse_args(arg)
+    print("input_args", input_args)
+    if input_args['SpeechMixEED']:
         model_type = "SpeechMixEED"
-        model = speechmix.SpeechMixEED(**input_arg)
-    elif input_arg['SpeechMixFixed']:
+        model = speechmix.SpeechMixEED(**input_args)
+    elif input_args['SpeechMixFixed']:
         model_type = "SpeechMixFixed"
-        model = speechmix.SpeechMixFixed(**input_arg)
-    elif input_arg['SpeechMixSelf']:
+        model = speechmix.SpeechMixFixed(**input_args)
+    elif input_args['SpeechMixSelf']:
         model_type = "SpeechMixSelf"
-        model = speechmix.SpeechMixSelf(**input_arg)
-    elif input_arg['SpeechMixGAN']:
+        model = speechmix.SpeechMixSelf(**input_args)
+    elif input_args['SpeechMixGAN']:
         model_type = "SpeechMixGAN"
-        model = speechmix.SpeechMixGAN(**input_arg)
-    elif input_arg['SpeechMixAdapt']:
-        model_type = "SpeechMixAdapt"
-        model = speechmix.SpeechMixAdapt(**input_arg)
-    elif input_arg['HFSpeechMixED']:
+        model = speechmix.SpeechMixGAN(**input_args)
+    elif input_args['SpeechMixAdapter']:
+        model_type = "SpeechMixAdapter"
+        model = speechmix.SpeechMixAdapter(**input_args)
+    elif input_args['HFSpeechMixED']:
         model_type = "HFSpeechMixED"
-        model = speechmix.HFSpeechMixED(**input_arg)
-    elif input_arg['HFSpeechMixEED']:
+        model = speechmix.HFSpeechMixED(**input_args)
+    elif input_args['HFSpeechMixEED']:
         model_type = "HFSpeechMixEED"
-        model = speechmix.HFSpeechMixEED(**input_arg)
-    elif input_arg['HFSpeechMixFixed']:
+        model = speechmix.HFSpeechMixEED(**input_args)
+    elif input_args['HFSpeechMixFixed']:
         model_type = "HFSpeechMixFixed"
-        model = speechmix.HFSpeechMixFixed(**input_arg)
-    elif input_arg['HFSpeechMixSelf']:
+        model = speechmix.HFSpeechMixFixed(**input_args)
+    elif input_args['HFSpeechMixSelf']:
         model_type = "HFSpeechMixSelf"
-        model = speechmix.HFSpeechMixSelf(**input_arg)
-    elif input_arg['HFSpeechMixGAN']:
+        model = speechmix.HFSpeechMixSelf(**input_args)
+    elif input_args['HFSpeechMixGAN']:
         model_type = "HFSpeechMixGAN"
-        model = speechmix.HFSpeechMixGAN(**input_arg)
-    elif input_arg['HFSpeechMixAdapt']:
-        model_type = "HFSpeechMixAdapt"
-        model = speechmix.HFSpeechMixAdapt(**input_arg)
+        model = speechmix.HFSpeechMixGAN(**input_args)
+    elif input_args['HFSpeechMixAdapter']:
+        model_type = "HFSpeechMixAdapter"
+        model = speechmix.HFSpeechMixAdapter(**input_args)
     else:
         model_type = "SpeechMixEED"
-        model = speechmix.SpeechMixEED(**input_arg)
+        model = speechmix.SpeechMixEED(**input_args)
 
     selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
-    cache_path_train = f'./train_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
-    cache_path_valid = f'./valid_ds_{input_arg["dataset"]}_{input_arg["field"]}_{input_arg["train_split"]}.parquet'
+    cache_path_train = f'./train_ds_{input_args["dataset"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+    cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
 
     if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
         train_ds = load_from_disk(cache_path_train)
         valid_ds = load_from_disk(cache_path_valid)
     else:
-        train_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["train_split"])
-        valid_ds = load_dataset(input_arg["dataset"], input_arg["field"], split=input_arg["test_split"])
+        train_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["train_split"])
+        valid_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["test_split"])
 
         train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
         valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
@@ -241,24 +242,24 @@ def main(arg=None):
                                             selftype=selftype)
 
     training_args = TrainingArguments(
-        output_dir=f"./{input_arg['speech_model_config']}_{input_arg['nlp_model_config']}_{model_type}_{input_arg.get('notes', '')}",
-        per_device_train_batch_size=int(input_arg['batch']),
-        per_device_eval_batch_size=int(input_arg['batch']),
-        gradient_accumulation_steps=int(input_arg['grad_accum']),
+        output_dir=f"./{input_args['speech_model_config']}_{input_args['nlp_model_config']}_{model_type}_{input_args.get('notes', '')}",
+        per_device_train_batch_size=int(input_args['batch']),
+        per_device_eval_batch_size=int(input_args['batch']),
+        gradient_accumulation_steps=int(input_args['grad_accum']),
         eval_accumulation_steps=2,
         evaluation_strategy="steps",
         group_by_length=True,
-        fp16=input_arg.get('fp16', True),
+        fp16=input_args.get('fp16', True),
         load_best_model_at_end=True,
-        num_train_epochs=input_arg.get('epoch', 10),
-        save_steps=input_arg.get('eval_step', 700),
-        eval_steps=input_arg.get('eval_step', 700),
-        logging_steps=input_arg.get('logging_steps', 10),
-        learning_rate=input_arg.get('lr', 5e-4),
-        warmup_steps=input_arg.get('warmup_steps', 500),
-        save_total_limit=input_arg.get('save_total_limit', 2),
-        dataloader_num_workers=input_arg.get('worker', 10),
-        report_to="wandb" if input_arg.get('wandb', True) else "none",
+        num_train_epochs=input_args.get('epoch', 10),
+        save_steps=input_args.get('eval_step', 700),
+        eval_steps=input_args.get('eval_step', 700),
+        logging_steps=input_args.get('logging_steps', 10),
+        learning_rate=input_args.get('lr', 5e-4),
+        warmup_steps=input_args.get('warmup_steps', 500),
+        save_total_limit=input_args.get('save_total_limit', 2),
+        dataloader_num_workers=input_args.get('worker', 10),
+        report_to="wandb" if input_args.get('wandb', True) else "none",
     )
     # some trainer problem - save all logistics on compute_metrics, cause out of memory, fix:argmax first;
     # dynamic padding on past key value, cause index error, fix: return only loss and logist
@@ -275,7 +276,7 @@ def main(arg=None):
     )
 
     # https://discuss.huggingface.co/t/gradual-layer-freezing/3381/4
-    freezing_callback = FreezingCallback(trainer, model.encoder_model, 1000)
+    freezing_callback = FreezingCallback(trainer, model.encoder_model, input_args.get('unfreeze_warmup_steps', 500))
     trainer.add_callback(freezing_callback)
 
     trainer.train()

@@ -31,7 +31,7 @@ class TestModel(unittest.TestCase):
         result = spm([torch.tensor(ds[0]["audio"]["array"], device=spm.device)],
                      labels=spm.tokenizer.encode(ds[0]['text'], return_tensors='pt').to(spm.device),
                      return_model_detail=True)
-        self.assertEqual(result['weighted_sum'].shape[0], 13)
+        self.assertEqual(result['weighted_sum'].shape[0], 12)
 
     def test_downscale(self):
         ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")

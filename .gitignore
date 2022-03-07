@@ -254,3 +254,7 @@ cython_debug/
 .how2
 how2
 /how2
+
+exp_record
+.exp_record
+/exp_record

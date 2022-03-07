@@ -14,12 +14,15 @@ pip install speechmix
 
 git clone and cd into this project.
 
-```bash
+```shell
 pip install -e .
 ```
 
+## Name the project(!important)
+WANDB_PROJECT=amazing
+
 ## base
-
+```shell
 python train.py --speech_model_config wav2vec2 \
 --nlp_model_config facebook/bart-base \
 --SpeechMixEED \
@@ -27,26 +30,7 @@ python train.py --speech_model_config wav2vec2 \
 --field clean \
 --train_split train.100 \
 --test_split validation \
---batch 4 \
---grad_accum 20 \
---epoch 30 \
---worker 15 \
---share_layer_ratio 0 \
---down_scale 1 \
---lr 4e-5 \
---warmup_steps 500 \
---wandb
-
-## downscale 2/4/8
-
-python train.py --speech_model_config wav2vec2 \
---nlp_model_config facebook/bart-base \
---SpeechMixEED \
---dataset librispeech_asr \
---field clean \
---train_split train.100 \
---test_split validation \
---batch 4 \
+--batch 3 \
 --grad_accum 20 \
 --epoch 30 \
 --worker 15 \
@@ -54,38 +38,8 @@ python train.py --speech_model_config wav2vec2 \
 --down_scale 2 \
 --lr 4e-5 \
 --warmup_steps 500 \
---wandb
+--wandb \
+--notes base
+```
 
-python train.py --speech_model_config wav2vec2 \
---nlp_model_config facebook/bart-base \
---SpeechMixEED \
---dataset librispeech_asr \
---field clean \
---train_split train.100 \
---test_split validation \
---batch 4 \
---grad_accum 20 \
---epoch 30 \
---worker 15 \
---share_layer_ratio 0 \
---down_scale 4 \
---lr 4e-5 \
---warmup_steps 500 \
---wandb
 
-python train.py --speech_model_config wav2vec2 \
---nlp_model_config facebook/bart-base \
---SpeechMixEED \
---dataset librispeech_asr \
---field clean \
---train_split train.100 \
---test_split validation \
---batch 4 \
---grad_accum 20 \
---epoch 30 \
---worker 15 \
---share_layer_ratio 0 \
---down_scale 8 \
---lr 4e-5 \
---warmup_steps 500 \
---wandb

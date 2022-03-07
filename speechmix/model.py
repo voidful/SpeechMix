@@ -141,7 +141,7 @@ class SpeechMixEED(nn.Module):
     def forward(self, input_values, text_input_ids=None, decoder_input_ids=None, labels=None,
                 return_model_detail=False):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, input_values[0].shape[0],
+            decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, len(input_values),
                                                           device=self.device)
         elif decoder_input_ids is None and labels is not None:
             decoder_input_ids = shift_tokens_right(labels, self.decoder_model.config.pad_token_id,

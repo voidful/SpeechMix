@@ -214,7 +214,7 @@ class SpeechMixAdapter(SpeechMixEED):
         [[self.adapters.append(nn.Sequential(nn.LayerNorm(embshape), nn.Linear(embshape, bottleneck), nn.ReLU(),
                                              nn.Linear(bottleneck, embshape))) for _ in model_decoder_layers] for
          model_decoder_layers in decoder_stack]
-
+        self.adapters.to(self.device)
         for s_i, s in enumerate(decoder_stack):
             for l_i, l in enumerate(s):
                 l.register_forward_hook(lambda m, i, o: (self.adapters[s_i * len(s) + l_i](o[0]), o[1:]))
@@ -226,27 +226,9 @@ class SpeechMixSelf(SpeechMixEED):
         self.encoder_model.eval()
         self.decoder_model.eval()
 
-        # for name, param in self.encoder_model.named_parameters():
-        #     if param.requires_grad:
-        #         param.requires_grad = False
-
         for name, param in self.decoder_model.named_parameters():
             if param.requires_grad:
                 param.requires_grad = False
-
-        # for name, param in self.encoder_model.base_model.named_parameters():
-        #     if any([k in name for k in ["layer_norm", "layernorm_embedding", "attention"]]):
-        #         param.requires_grad = True
-        #     else:
-        #         param.requires_grad = False
-
-        # embshape = self.encoder_model.config.hidden_size
-        # bottleneck = int(embshape / 2)
-        # self.adapters = nn.ModuleList([nn.Sequential(nn.LayerNorm(embshape), nn.Linear(embshape, bottleneck), nn.ReLU(),
-        #                                              nn.Linear(bottleneck, embshape)) for _ in
-        #                                range(len(self.encoder_model.base_model.encoder.layers))])
-        # for l_i, l in enumerate(self.encoder_model.base_model.encoder.layers):
-        #     l.register_forward_hook(lambda m, i, o: (self.adapters[l_i](o[0]), o[1:]))
 
     def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
                  labels=None):
@@ -273,9 +255,10 @@ class SpeechMixSelf(SpeechMixEED):
             kld_loss_fn = torch.nn.KLDivLoss(reduction='batchmean')
             kld_loss = kld_loss_fn(torch.nn.functional.log_softmax(outputs.logits, dim=-1),
                                    torch.nn.functional.softmax(nlp_outputs.logits, dim=-1))
-            loss = kld_loss + outputs.loss + mse_loss
+            ce_loss = outputs.loss
+            loss = kld_loss + ce_loss + mse_loss
 
-            # print(outputs['mse_loss'].mean().item(), outputs['kld_loss'].mean().item(), outputs['ce_loss'].mean().item())
+            # print(mse_loss.mean().item(), kld_loss.mean().item(), ce_loss.mean().item())
             outputs['loss'] = loss.mean()
 
         return outputs
@@ -284,11 +267,17 @@ class SpeechMixSelf(SpeechMixEED):
 class SpeechMixGAN(SpeechMixEED):
 
     def custom_modules(self, **kwargs):
+        self.encoder_model.eval()
+        self.decoder_model.eval()
+
+        for name, param in self.decoder_model.named_parameters():
+            if param.requires_grad:
+                param.requires_grad = False
+
         self.discriminator = nn.Linear(self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
         self.des_update = 1000
         self.update_count = 1
         self.keep_update = 1000
-        return None
 
     def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
                  labels=None):

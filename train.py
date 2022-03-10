@@ -13,35 +13,44 @@ from typing import Dict, List, Union, Optional
 from dataclasses import dataclass
 
 
+def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
+    gen_input = tokenizer(input_sent, add_special_tokens=False).input_ids
+    predicted = [decoder_model.config.decoder_start_token_id]
+    print([decoder_model.config.decoder_start_token_id])
+    with torch.no_grad():
+        decoder_model.eval()
+        for _ in range(decoder_model.config.max_length):
+            max_item = torch.argmax(
+                decoder_model(input_ids=torch.tensor([gen_input], device=device),
+                              output_hidden_states=True,
+                              decoder_input_ids=torch.tensor(
+                                  [predicted],
+                                  device=device)).logits, -1)[:, -1].item()
+            if decoder_model.config.eos_token_id == max_item:
+                break
+            predicted.append(max_item)
+    return gen_input, predicted[1:]
+
+
 def main(arg=None):
     def prepare_dataset(batch, selftype=False):
         audio = batch["audio"]
-        batch["input_values"] = audio["array"]
-        batch["length"] = batch["input_values"].size
+        new_batch = {}
+        new_batch["input_values"] = audio["array"]
+        new_batch["length"] = audio["array"].size
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
-        gen_input = model.tokenizer(sent, add_special_tokens=False).input_ids
         if selftype:
-            predicted = [model.decoder_model.config.decoder_start_token_id]
-            with torch.no_grad():
-                model.decoder_model.eval()
-                for _ in range(model.decoder_model.config.max_length):
-                    max_item = torch.argmax(
-                        model.decoder_model(input_ids=torch.tensor([gen_input], device=model.device),
-                                            output_hidden_states=True,
-                                            decoder_input_ids=torch.tensor(
-                                                [predicted],
-                                                device=model.device)).logits, -1)[:, -1].item()
-                    if model.decoder_model.config.eos_token_id == max_item:
-                        break
-                    predicted.append(max_item)
-            batch["text_input_ids"] = gen_input
-            batch['labels'] = predicted[1:]
+            decoder_input, decoder_target = model.decoder_model.eval(model.decoder_model, model.tokenizer, sent,
+                                                                     model.device)
+            new_batch["text_input_ids"] = decoder_input
+            new_batch['labels'] = decoder_target
         else:
-            batch['labels'] = gen_input
-        batch['labels'] += [model.tokenizer.eos_token_id]
-        batch["input_ids"] = batch["labels"]
-        return batch
+            gen_input = model.tokenizer(sent, add_special_tokens=False).input_ids
+            new_batch['labels'] = gen_input
+        new_batch['labels'] += [model.tokenizer.eos_token_id]
+        new_batch["input_ids"] = new_batch["labels"]
+        return new_batch
 
     def compute_metrics(pred):
         pred_ids = pred.predictions
@@ -94,7 +103,7 @@ def main(arg=None):
 
             # if bos token is appended in previous tokenization step,
             # cut bos token here as it's append later anyway
-            if (labels_batch[:, 0] == self.tokenizer.bos_token_id).all().cpu().item():
+            if self.tokenizer.bos_token_id and (labels_batch[:, 0] == self.tokenizer.bos_token_id).all().cpu().item():
                 labels_batch = labels_batch[:, 1:]
 
             batch['labels'] = labels_batch
@@ -247,6 +256,7 @@ def main(arg=None):
         per_device_eval_batch_size=int(input_args['batch']),
         gradient_accumulation_steps=int(input_args['grad_accum']),
         eval_accumulation_steps=2,
+        optim="adafactor",
         evaluation_strategy="steps",
         group_by_length=True,
         fp16=input_args.get('fp16', True),

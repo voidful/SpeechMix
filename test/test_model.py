@@ -2,7 +2,8 @@ import unittest
 import pytest
 from datasets import load_dataset
 import torch
-from speechmix import SpeechMixEED
+from speechmix import SpeechMixEED, SpeechMixAdapter, SpeechMixSelf, SpeechMixGAN
+from train import create_self_decoder_input
 
 
 class TestModel(unittest.TestCase):
@@ -50,6 +51,40 @@ class TestModel(unittest.TestCase):
         self.assertEqual(spm.speech_encoder_layer, 6)
         self.assertEqual(spm.nlp_encoder_layer, 6)
         self.assertEqual(len(spm.list_no_grad), 0)
+
+    def test_adapter(self):
+        ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
+        spm = SpeechMixAdapter('wav2vec2', "voidful/bart-base-chinese",
+                               fixed_parameters=False, share_layer_ratio=0.4, down_scale=8, )
+        result = spm([torch.tensor(ds[0]["audio"]["array"], device=spm.device)],
+                     labels=spm.tokenizer.encode(ds[0]['text'], return_tensors='pt').to(spm.device),
+                     return_model_detail=True)
+        self.assertEqual(spm.speech_encoder_layer, 8)
+        self.assertEqual(spm.nlp_encoder_layer, 6)
+
+    def test_self(self):
+        ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
+        spm = SpeechMixSelf('wav2vec2', "voidful/bart-base-chinese",
+                            fixed_parameters=False, share_layer_ratio=0.4, down_scale=8, )
+        i, t = create_self_decoder_input(spm.decoder_model.to(spm.device), spm.tokenizer, ds[0]['text'], spm.device)
+        result = spm([torch.tensor(ds[0]["audio"]["array"], device=spm.device)],
+                     text_input_ids=torch.tensor([i], device=spm.device),
+                     labels=torch.tensor([t], device=spm.device),
+                     return_model_detail=True)
+        print(result)
+        self.assertEqual(spm.speech_encoder_layer, 8)
+        self.assertEqual(spm.nlp_encoder_layer, 6)
+
+    def test_gan(self):
+        ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
+        spm = SpeechMixGAN('wav2vec2', "voidful/bart-base-chinese",
+                           fixed_parameters=False, share_layer_ratio=0.4, down_scale=8, )
+        result = spm([torch.tensor(ds[0]["audio"]["array"], device=spm.device)],
+                     labels=spm.tokenizer.encode(ds[0]['text'], return_tensors='pt').to(spm.device),
+                     return_model_detail=True)
+        print(result)
+        self.assertEqual(spm.speech_encoder_layer, 8)
+        self.assertEqual(spm.nlp_encoder_layer, 6)
 
 
 if __name__ == '__main__':

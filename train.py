@@ -41,7 +41,7 @@ def main(arg=None):
         sent = sent.lower()
         if selftype:
             decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer, sent,
-                                                                     model.device)
+                                                                      model.device)
             new_batch["text_input_ids"] = decoder_input
             new_batch['labels'] = decoder_target
         else:
@@ -258,8 +258,8 @@ def main(arg=None):
         optim="adafactor",
         evaluation_strategy="steps",
         group_by_length=True,
-        fp16=input_args.get('fp16', True),
         load_best_model_at_end=True,
+        fp16=input_args.get('fp16', True),
         num_train_epochs=input_args.get('epoch', 10),
         save_steps=input_args.get('eval_step', 700),
         eval_steps=input_args.get('eval_step', 700),

@@ -16,7 +16,6 @@ from dataclasses import dataclass
 def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
     gen_input = tokenizer(input_sent, add_special_tokens=False).input_ids
     predicted = [decoder_model.config.decoder_start_token_id]
-    print([decoder_model.config.decoder_start_token_id])
     with torch.no_grad():
         decoder_model.eval()
         for _ in range(decoder_model.config.max_length):
@@ -41,7 +40,7 @@ def main(arg=None):
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
         if selftype:
-            decoder_input, decoder_target = model.decoder_model.eval(model.decoder_model, model.tokenizer, sent,
+            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer, sent,
                                                                      model.device)
             new_batch["text_input_ids"] = decoder_input
             new_batch['labels'] = decoder_target

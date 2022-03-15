@@ -14,11 +14,12 @@ from dataclasses import dataclass
 
 
 def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
-    gen_input = tokenizer(input_sent, add_special_tokens=False).input_ids
+    gen_input = tokenizer(input_sent, add_special_tokens=True).input_ids
     predicted = [decoder_model.config.decoder_start_token_id]
     with torch.no_grad():
         decoder_model.eval()
-        for _ in range(decoder_model.config.max_length):
+        decoder_length = max(decoder_model.config.max_length, len(gen_input))
+        for _ in range(decoder_length):
             max_item = torch.argmax(
                 decoder_model(input_ids=torch.tensor([gen_input], device=device),
                               output_hidden_states=True,
@@ -40,7 +41,9 @@ def main(arg=None):
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
         if selftype:
-            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer, sent,
+            input_text_prompt = "ASR: "
+            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
+                                                                      input_text_prompt + sent,
                                                                       model.device)
             new_batch["text_input_ids"] = decoder_input
             new_batch['labels'] = decoder_target
@@ -227,8 +230,8 @@ def main(arg=None):
         model = speechmix.SpeechMixEED(**input_args)
 
     selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
-    cache_path_train = f'./train_ds_{input_args["dataset"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
-    cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+    cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+    cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
 
     if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
         train_ds = load_from_disk(cache_path_train)

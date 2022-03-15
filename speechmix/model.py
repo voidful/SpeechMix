@@ -121,6 +121,7 @@ class SpeechMixEED(nn.Module):
                 list_no_grad.append(name)
 
         self.speech_encoder_layer = len(self.encoder_model.model.encoder.layers)
+        self.nlp_emb = self.decoder_model.get_input_embeddings()
         self.nlp_encoder_layer = num_nlp_encoder_layers
         self.list_grad = list_grad
         self.list_no_grad = list_no_grad
@@ -138,7 +139,7 @@ class SpeechMixEED(nn.Module):
                                         decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
-    def forward(self, input_values, text_input_ids=None, decoder_input_ids=None, labels=None,
+    def forward(self, input_values, input_text_prompt=None, text_input_ids=None, decoder_input_ids=None, labels=None,
                 return_model_detail=False):
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, len(input_values),
@@ -167,6 +168,10 @@ class SpeechMixEED(nn.Module):
         inputs_embeds = self.enc_to_dec_proj(inputs_embeds)
         if return_model_detail:
             return_dict['shape_after_enc_dec_projector'] = inputs_embeds.shape
+        if input_text_prompt is not None:
+            text_prompt = self.nlp_emb(
+                self.tokenizer(input_text_prompt, return_tensors='pt')['input_ids'].to(self.device))
+            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1).shape
         outputs = self.cal_loss(inputs_embeds=inputs_embeds, text_input_ids=text_input_ids,
                                 decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict['logits'] = torch.argmax(outputs['logits'], -1)

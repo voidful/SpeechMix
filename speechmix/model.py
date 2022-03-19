@@ -171,7 +171,7 @@ class SpeechMixEED(nn.Module):
         if input_text_prompt is not None:
             text_prompt = self.nlp_emb(
                 self.tokenizer(input_text_prompt, return_tensors='pt')['input_ids'].to(self.device))
-            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1).shape
+            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1)
         outputs = self.cal_loss(inputs_embeds=inputs_embeds, text_input_ids=text_input_ids,
                                 decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict['logits'] = torch.argmax(outputs['logits'], -1)

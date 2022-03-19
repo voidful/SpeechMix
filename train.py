@@ -45,13 +45,13 @@ def main(arg=None):
             decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
                                                                       input_text_prompt + sent,
                                                                       model.device)
+            new_batch['input_text_prompt'] = input_text_prompt
             new_batch["text_input_ids"] = decoder_input
             new_batch['labels'] = decoder_target
         else:
             gen_input = model.tokenizer(sent, add_special_tokens=False).input_ids
             new_batch['labels'] = gen_input
         new_batch['labels'] += [model.tokenizer.eos_token_id]
-        new_batch["input_ids"] = new_batch["labels"]
         return new_batch
 
     def compute_metrics(pred):
@@ -159,6 +159,7 @@ def main(arg=None):
         parser.add_argument("--HFSpeechMixAdapter", action='store_true')
         parser.add_argument("--HFSpeechMixGAN", action='store_true')
         parser.add_argument("--HFSpeechMixFixed", action='store_true')
+        parser.add_argument("--cache", action='store_true')
         parser.add_argument("--dataset", type=str)
         parser.add_argument("--field", type=str)
         parser.add_argument("--train_split", type=str)
@@ -229,11 +230,12 @@ def main(arg=None):
         model_type = "SpeechMixEED"
         model = speechmix.SpeechMixEED(**input_args)
 
-    selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
+    # selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
+    selftype = 'SpeechMixSelf' in model_type
     cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
     cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
 
-    if os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
+    if input_args['cache'] and os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
         train_ds = load_from_disk(cache_path_train)
         valid_ds = load_from_disk(cache_path_valid)
     else:

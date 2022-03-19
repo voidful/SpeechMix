@@ -9,7 +9,7 @@ from train import create_self_decoder_input
 class TestModel(unittest.TestCase):
     def test_t5_create_self_decoder_input(self):
         test_sent = 'the ordinary duties of life mister daly anxious to make some return for the kindness shown him offered to act as tutor to all the children who were old enough for school duties'
-        for config in ["valhalla/t5-small-qg-hl",'facebook/bart-base']:
+        for config in ["valhalla/t5-small-qg-hl", 'facebook/bart-base']:
             tokenizer = AutoTokenizer.from_pretrained(config)
             model = AutoModelForSeq2SeqLM.from_pretrained(config)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -23,10 +23,10 @@ class TestModel(unittest.TestCase):
             print("generate tokenize:", tokenizer.batch_decode(gen_result))
 
             loss_a = model(input_ids=torch.tensor([i], device=device),
-                            labels=torch.tensor([t], device=device)).loss.data.tolist()
+                           labels=torch.tensor([t], device=device)).loss.data.tolist()
             loss_b = model(input_ids=torch.tensor([i], device=device),
-                            labels=torch.tensor(gen_result, device=device)).loss.data.tolist()
-            print(loss_a,loss_b)
+                           labels=torch.tensor(gen_result, device=device)).loss.data.tolist()
+            print(loss_a, loss_b)
             self.assertTrue(loss_a < loss_b)
 
 

@@ -1,6 +1,13 @@
 # SpeechMix
 
-Explore different way to mix speech model(wav2vec2, hubert) and nlp model(BART,T5,GPT) together.
+Explore different way to mix speech model(wav2vec2, hubert) and nlp model(BART,T5,GPT) together.   
+
+Implementation of:   
+[Large-Scale Self- and Semi-Supervised Learning for Speech Translation](https://arxiv.org/abs/2104.06678) - ACL2021   
+[Multilingual Speech Translation with Efficient Finetuning of Pretrained Models](https://arxiv.org/abs/2010.12829) - ACL2021   
+[Lightweight Adapter Tuning for Multilingual Speech Translation](https://arxiv.org/abs/2106.01463) - Interspeech 2021   
+[Improving Speech Translation by Understanding and Learning from the Auxiliary Text Translation Task](https://arxiv.org/abs/2107.05782) - ACL2021   
+[A General Multi-Task Learning Framework to Leverage Text Data for Speech to Text Tasks](https://arxiv.org/abs/2010.11338) - ICASSP 2021   
 
 ## Installation
 

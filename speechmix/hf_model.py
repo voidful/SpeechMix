@@ -1,10 +1,10 @@
 import math
-
-from torch import nn
-from transformers import AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
-    Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel, Wav2Vec2Model
 import torch
 import torch.nn.functional as F
+from torch import nn
+from torch.nn.utils.rnn import pad_sequence
+from transformers import AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
+    Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel, Wav2Vec2Model
 
 
 def handle_decoder_input_none(decoder_config, batch=1, device='cpu'):
@@ -152,7 +152,8 @@ class HFSpeechMixEED(nn.Module):
             decoder_input_ids = shift_tokens_right(labels, self.decoder_model.config.pad_token_id,
                                                    self.decoder_model.config.decoder_start_token_id)
         return_dict = {}
-        encoder_outputs = self.encoder_model(torch.stack((input_values)), output_hidden_states=True)
+        encoder_outputs = self.encoder_model(pad_sequence(input_values, batch_first=True, padding_value=-100),
+                                             output_hidden_states=True)
         inputs_embeds = encoder_outputs['hidden_states'][-1].to(self.device)
         if self.weighted_sum:
             # weighted sum
@@ -173,7 +174,8 @@ class HFSpeechMixEED(nn.Module):
         if return_model_detail:
             return_dict['shape_after_enc_dec_projector'] = inputs_embeds.shape
         if input_text_prompt is not None:
-            text_prompt = self.nlp_emb(self.tokenizer(input_text_prompt, return_tensors='pt')['input_ids'].to(self.device))
+            text_prompt = self.nlp_emb(
+                self.tokenizer(input_text_prompt, return_tensors='pt')['input_ids'].to(self.device))
             inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1).shape
         outputs = self.cal_loss(inputs_embeds=inputs_embeds, text_input_ids=text_input_ids,
                                 decoder_input_ids=decoder_input_ids, labels=labels)

@@ -129,17 +129,14 @@ class SpeechMixEED(nn.Module):
     def custom_modules(self, **kwargs):
         return None
 
-    def cal_loss(self, inputs_embeds=None, text_input_ids=None, attention_mask=None, decoder_input_ids=None,
+    def cal_loss(self, inputs_embeds=None,  attention_mask=None, decoder_input_ids=None,
                  labels=None):
         if inputs_embeds is not None:
             output = self.decoder_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask,
                                         decoder_input_ids=decoder_input_ids, labels=labels)
-        elif text_input_ids is not None:
-            output = self.decoder_model(input_ids=text_input_ids,
-                                        decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
-    def forward(self, input_values, input_text_prompt=None, text_input_ids=None, decoder_input_ids=None, labels=None,
+    def forward(self, input_values, input_text_prompt=None,decoder_input_ids=None, labels=None,
                 return_model_detail=False):
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, len(input_values),
@@ -172,7 +169,7 @@ class SpeechMixEED(nn.Module):
             text_prompt = self.nlp_emb(
                 self.tokenizer(input_text_prompt, return_tensors='pt')['input_ids'].to(self.device))
             inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1)
-        outputs = self.cal_loss(inputs_embeds=inputs_embeds, text_input_ids=text_input_ids,
+        outputs = self.cal_loss(inputs_embeds=inputs_embeds,
                                 decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict['logits'] = torch.argmax(outputs['logits'], -1)
         if 'loss' in outputs:

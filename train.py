@@ -1,16 +1,17 @@
 import argparse
 import os
 import sys
+from dataclasses import dataclass
+from typing import Dict, List, Union, Optional
 
 import asrp
-
-import speechmix
-from datasets import load_dataset, Audio, load_from_disk
 import torch
+import torchaudio
+from datasets import load_dataset, Audio, load_from_disk
 from transformers import Trainer, TrainingArguments, EarlyStoppingCallback, AutoTokenizer, TrainerCallback, \
     TrainerState, TrainerControl
-from typing import Dict, List, Union, Optional
-from dataclasses import dataclass
+
+import speechmix
 
 
 def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
@@ -33,6 +34,15 @@ def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
 
 
 def main(arg=None):
+    def prepare_dataset_custom(batch):
+        path = batch["path"]
+        speech, sampling_rate = torchaudio.load(path)
+        resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16_000)
+        batch["input_values"] = resampler.forward(speech.squeeze(0)).numpy()
+        batch["length"] = len(batch["input_values"])
+        batch["labels"] = model.tokenizer(batch["text"]).input_ids
+        return batch
+
     def prepare_dataset(batch, selftype=False):
         audio = batch["audio"]
         new_batch = {}
@@ -82,7 +92,6 @@ def main(arg=None):
             batch = {}
             batch['input_values'] = [torch.tensor(feature["input_values"]) for feature in features]
             label_features = [{"input_ids": feature['labels']} for feature in features]
-
             labels_batch = self.tokenizer.pad(
                 label_features,
                 padding=self.padding,
@@ -180,6 +189,7 @@ def main(arg=None):
         parser.add_argument('--down_scale', default=8, type=int)
         parser.add_argument('--weighted_sum', action='store_true')
         parser.add_argument('--fixed_parameters', action='store_true')
+        parser.add_argument("--custom_set", type=str)
         parser.add_argument('--fixed_except', nargs='+',
                             default=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                      "layernorm_embedding", 'attention', 'encoder'])
@@ -232,24 +242,50 @@ def main(arg=None):
 
     # selftype = ('SpeechMixSelf' in model_type or 'SpeechMixGAN' in model_type)
     selftype = 'SpeechMixSelf' in model_type
-    cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
-    cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+    if 'custom_set' in input_args:
+        cache_file_train = f"{input_args['custom_set']}_hf_train.data"
+        if input_args['cache'] and os.path.isdir(cache_file_train):
+            train_ds = load_dataset('csv', data_files=input_args['custom_set'])['train']
+            train_ds = train_ds.load_from_disk(cache_file_train)
+            print("train_ds", train_ds)
+        else:
+            dataset = load_dataset('csv', data_files=input_args['custom_set'], cache_dir='./.cache')
+            dataset = dataset['train']
+            dataset = dataset.train_test_split(test_size=0.1)
+            train_ds = dataset['train']
+            train_ds = train_ds.map(prepare_dataset_custom, keep_in_memory=False, num_proc=input_args["num_proc"])
+            train_ds.save_to_disk(cache_file_train)
 
-    if input_args['cache'] and os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
-        train_ds = load_from_disk(cache_path_train)
-        valid_ds = load_from_disk(cache_path_valid)
+        cache_file_test = f"{input_args['custom_set']}_hf_test.data"
+        if input_args['cache'] and os.path.isdir(cache_file_test):
+            valid_ds = load_dataset('csv', data_files=input_args['custom_set'])['train']
+            valid_ds = valid_ds.load_from_disk(cache_file_test)
+        else:
+            dataset = load_dataset('csv', data_files=input_args['custom_set'], cache_dir='./.cache')
+            dataset = dataset['train']
+            dataset = dataset.train_test_split(test_size=0.1)
+            valid_ds = dataset['test']
+            valid_ds = valid_ds.map(prepare_dataset_custom, keep_in_memory=False, num_proc=input_args["num_proc"])
+            valid_ds.save_to_disk(cache_file_test)
+        print(train_ds)
     else:
-        train_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["train_split"])
-        valid_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["test_split"])
+        cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+        cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
+        if input_args['cache'] and os.path.exists(cache_path_train) and os.path.exists(cache_path_valid):
+            train_ds = load_from_disk(cache_path_train)
+            valid_ds = load_from_disk(cache_path_valid)
+        else:
+            train_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["train_split"])
+            valid_ds = load_dataset(input_args["dataset"], input_args["field"], split=input_args["test_split"])
 
-        train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
-        valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
+            train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
+            valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-        train_ds = train_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
-        valid_ds = valid_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
+            train_ds = train_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
+            valid_ds = valid_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
 
-        train_ds.save_to_disk(cache_path_train)
-        valid_ds.save_to_disk(cache_path_valid)
+            train_ds.save_to_disk(cache_path_train)
+            valid_ds.save_to_disk(cache_path_valid)
 
     data_collator = DataCollatorWithPadding(tokenizer=model.tokenizer, padding=True,
                                             selftype=selftype)
@@ -262,7 +298,7 @@ def main(arg=None):
         eval_accumulation_steps=2,
         optim="adafactor",
         evaluation_strategy="steps",
-        group_by_length=True,
+        # group_by_length=True,
         load_best_model_at_end=True,
         fp16=input_args.get('fp16', True),
         num_train_epochs=input_args.get('epoch', 10),

@@ -39,7 +39,7 @@ def main(arg=None):
         speech, sampling_rate = torchaudio.load(path)
         resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16_000)
         batch["input_values"] = resampler.forward(speech.squeeze(0)).numpy()
-        batch["length"] = len(batch["input_values"])
+        batch["lengths"] = len(batch["input_values"])
         batch["labels"] = model.tokenizer(batch["text"]).input_ids
         return batch
 
@@ -47,7 +47,7 @@ def main(arg=None):
         audio = batch["audio"]
         new_batch = {}
         new_batch["input_values"] = audio["array"]
-        new_batch["length"] = audio["array"].size
+        new_batch["lengths"] = audio["array"].size
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
         if selftype:
@@ -190,6 +190,8 @@ def main(arg=None):
         parser.add_argument('--weighted_sum', action='store_true')
         parser.add_argument('--fixed_parameters', action='store_true')
         parser.add_argument("--custom_set", type=str)
+        parser.add_argument("--max_input_length_in_sec", default=20, type=int)
+        parser.add_argument("--group_by_length", action="store_true")
         parser.add_argument('--fixed_except', nargs='+',
                             default=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                      "layernorm_embedding", 'attention', 'encoder'])
@@ -287,6 +289,18 @@ def main(arg=None):
             train_ds.save_to_disk(cache_path_train)
             valid_ds.save_to_disk(cache_path_valid)
 
+    if input_args.get('max_input_length_in_sec', None):
+        max_input_length_in_sec = input_args['max_input_length_in_sec']
+        min_input_length_in_sec = 1
+        train_ds = train_ds.filter(
+            lambda
+                x: min_input_length_in_sec * 16000 < x < max_input_length_in_sec * 16000,
+            input_columns=["lengths"])
+        valid_ds = valid_ds.filter(
+            lambda
+                x: min_input_length_in_sec * 16000 < x < max_input_length_in_sec * 16000,
+            input_columns=["lengths"])
+
     data_collator = DataCollatorWithPadding(tokenizer=model.tokenizer, padding=True,
                                             selftype=selftype)
 
@@ -296,9 +310,9 @@ def main(arg=None):
         per_device_eval_batch_size=int(input_args['batch']),
         gradient_accumulation_steps=int(input_args['grad_accum']),
         eval_accumulation_steps=2,
+        group_by_length=input_args["group_by_length"],
         optim="adafactor",
         evaluation_strategy="steps",
-        # group_by_length=True,
         load_best_model_at_end=True,
         fp16=input_args.get('fp16', True),
         num_train_epochs=input_args.get('epoch', 10),

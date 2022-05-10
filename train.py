@@ -8,6 +8,7 @@ import asrp
 import torch
 import torchaudio
 from datasets import load_dataset, Audio, load_from_disk
+from torch.nn.utils.rnn import pad_sequence
 from transformers import Trainer, TrainingArguments, EarlyStoppingCallback, AutoTokenizer, TrainerCallback, \
     TrainerState, TrainerControl
 
@@ -90,7 +91,8 @@ def main(arg=None):
 
         def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
             batch = {}
-            batch['input_values'] = [torch.tensor(feature["input_values"]) for feature in features]
+            batch['input_values'] = pad_sequence([torch.tensor(feature["input_values"]) for feature in features],
+                                                 batch_first=True, padding_value=-100)
             label_features = [{"input_ids": feature['labels']} for feature in features]
             labels_batch = self.tokenizer.pad(
                 label_features,
@@ -249,7 +251,6 @@ def main(arg=None):
         if input_args['cache'] and os.path.isdir(cache_file_train):
             train_ds = load_dataset('csv', data_files=input_args['custom_set'])['train']
             train_ds = train_ds.load_from_disk(cache_file_train)
-            print("train_ds", train_ds)
         else:
             dataset = load_dataset('csv', data_files=input_args['custom_set'], cache_dir='./.cache')
             dataset = dataset['train']
@@ -269,7 +270,6 @@ def main(arg=None):
             valid_ds = dataset['test']
             valid_ds = valid_ds.map(prepare_dataset_custom, keep_in_memory=False, num_proc=input_args["num_proc"])
             valid_ds.save_to_disk(cache_file_test)
-        print(train_ds)
     else:
         cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
         cache_path_valid = f'./valid_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'

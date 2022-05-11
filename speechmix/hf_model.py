@@ -4,7 +4,6 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForSeq2SeqLM, SpeechEncoderDecoderModel, AutoTokenizer, \
     Wav2Vec2FeatureExtractor, HubertModel, UniSpeechSatModel, Wav2Vec2Model, PreTrainedModel, PretrainedConfig, \
     AutoConfig
@@ -221,16 +220,14 @@ class HFSpeechMixEED(PreTrainedModel):
     def prepare_inputs_for_generation(
             self, input_ids, past=None, attention_mask=None, use_cache=None, encoder_outputs=None, **kwargs
     ):
-        decoder_inputs = self.decoder_model.prepare_inputs_for_generation(input_ids, past=past)
+        # decoder_inputs = self.decoder_model.prepare_inputs_for_generation(input_ids, past=past)
         # decoder_attention_mask = decoder_inputs["attention_mask"] if "attention_mask" in decoder_inputs else None
         # "attention_mask": attention_mask,
         # "decoder_attention_mask": decoder_attention_mask,
         # "past_key_values": decoder_inputs["past_key_values"],
         # "use_cache": use_cache,
-        input_dict = {
-            "decoder_input_ids": decoder_inputs["input_ids"],
-            "encoder_outputs": encoder_outputs,
-        }
+        input_dict = {"decoder_input_ids": input_ids, "encoder_outputs": encoder_outputs,
+                      "attention_mask": attention_mask, "use_cache": use_cache, 'decoder_input_ids': input_ids}
         return input_dict
 
     def custom_modules(self, **kwargs):

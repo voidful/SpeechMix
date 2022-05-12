@@ -180,7 +180,8 @@ class HFSpeechMixEED(PreTrainedModel):
         else:
             self.length_adapters = nn.Sequential(nn.Identity())
 
-        self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers + 1))
+        if self.weighted_sum:
+            self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers + 1))
         self.enc_to_dec_proj = nn.Linear(self.encoder_model.config.hidden_size,
                                          self.decoder_model.config.hidden_size)
         self.custom_modules(**kwargs)
@@ -202,7 +203,8 @@ class HFSpeechMixEED(PreTrainedModel):
                 list_grad.append(name)
             else:
                 list_no_grad.append(name)
-
+        
+        self.nlp_emb = self.decoder_model.get_input_embeddings()
         self.speech_encoder_layer = len(self.encoder_model.encoder.layers)
         self.nlp_encoder_layer = num_nlp_encoder_layers
         self.list_grad = list_grad
@@ -300,7 +302,6 @@ class HFSpeechMixEED(PreTrainedModel):
             # encoder_hidden_states=encoder_outputs.hidden_states,
             # encoder_attentions=encoder_outputs.attentions,
         )
-
 
 class HFSpeechMixFixed(HFSpeechMixEED):
 

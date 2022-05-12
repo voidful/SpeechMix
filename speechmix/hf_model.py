@@ -334,6 +334,9 @@ class HFSpeechMixEED(PreTrainedModel):
         input_dict.update(kwargs)
         return input_dict
 
+    def _reorder_cache(self, past, beam_idx):
+        return self.decoder_model._reorder_cache(past, beam_idx)
+
     def custom_modules(self, **kwargs):
         return None
 
@@ -418,7 +421,7 @@ class HFSpeechMixEED(PreTrainedModel):
                 self.tokenizer(decoder_text_prompt,
                                return_tensors="pt")["input_ids"].to(
                     self.device))
-            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1)
+            inputs_embeds = torch.cat((text_prompt.expand(inputs_embeds.shape[0], -1, -1), inputs_embeds), 1)
         outputs = self.cal_loss(
             inputs_embeds=inputs_embeds,
             text_input_ids=text_input_ids,

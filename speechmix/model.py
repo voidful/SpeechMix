@@ -4,8 +4,10 @@ import s3prl.hub as hub
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import (AutoModelForSeq2SeqLM, AutoTokenizer,
-                          SpeechEncoderDecoderModel, Wav2Vec2FeatureExtractor)
+from transformers import AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer
+from transformers import SpeechEncoderDecoderModel
+from transformers import Wav2Vec2FeatureExtractor
 
 
 def handle_decoder_input_none(decoder_config, batch=1, device="cpu"):

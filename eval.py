@@ -1,7 +1,8 @@
 import torch
 from datasets import load_dataset
 
-from speechmix import HFSpeechMixEED, SpeechMixEEDT5eval
+from speechmix import HFSpeechMixEED
+from speechmix import SpeechMixEEDT5eval
 
 ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
 spm = HFSpeechMixEED(

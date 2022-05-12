@@ -1,21 +1,13 @@
 import copy
-
 import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
-from transformers import (
-    AutoModelForSeq2SeqLM,
-    SpeechEncoderDecoderModel,
-    AutoTokenizer,
-    Wav2Vec2FeatureExtractor,
-    HubertModel,
-    UniSpeechSatModel,
-    Wav2Vec2Model,
-    PreTrainedModel,
-    PretrainedConfig,
-    AutoConfig,
-)
+from transformers import (AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer,
+                          HubertModel, PretrainedConfig, PreTrainedModel,
+                          SpeechEncoderDecoderModel, UniSpeechSatModel,
+                          Wav2Vec2FeatureExtractor, Wav2Vec2Model)
 from transformers.modeling_outputs import Seq2SeqLMOutput
 
 

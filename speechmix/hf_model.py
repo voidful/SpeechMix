@@ -1,6 +1,6 @@
 import copy
-import math
 
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -8,8 +8,8 @@ from transformers import AutoConfig
 from transformers import AutoModelForSeq2SeqLM
 from transformers import AutoTokenizer
 from transformers import HubertModel
-from transformers import PretrainedConfig
 from transformers import PreTrainedModel
+from transformers import PretrainedConfig
 from transformers import SpeechEncoderDecoderModel
 from transformers import UniSpeechSatModel
 from transformers import Wav2Vec2FeatureExtractor
@@ -41,7 +41,7 @@ class SpeechMixConfig(PretrainedConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         assert (
-            "encoder" in kwargs and "decoder" in kwargs
+                "encoder" in kwargs and "decoder" in kwargs
         ), "Config has to be initialized with encoder and decoder config"
         encoder_config = kwargs.pop("encoder")
         encoder_model_type = encoder_config.pop("model_type")
@@ -56,10 +56,10 @@ class SpeechMixConfig(PretrainedConfig):
 
     @classmethod
     def from_configs(
-        cls,
-        encoder_config: PretrainedConfig,
-        decoder_config: PretrainedConfig,
-        **kwargs,
+            cls,
+            encoder_config: PretrainedConfig,
+            decoder_config: PretrainedConfig,
+            **kwargs,
     ) -> PretrainedConfig:
         encoder_config = AutoConfig.from_pretrained(encoder_config)
         decoder_config = AutoConfig.from_pretrained(decoder_config)
@@ -83,20 +83,20 @@ class HFSpeechMixED(PreTrainedModel):
     main_input_name = "input_values"
 
     def __init__(
-        self,
-        speech_model_config,
-        nlp_model_config,
-        fixed_parameters=False,
-        fixed_except=[
-            "layer_norm",
-            "encoder_attn",
-            "enc_to_dec_proj",
-            "length_adapter",
-            "layernorm_embedding",
-            "attention",
-            "encoder",
-        ],
-        **kwargs,
+            self,
+            speech_model_config,
+            nlp_model_config,
+            fixed_parameters=False,
+            fixed_except=[
+                "layer_norm",
+                "encoder_attn",
+                "enc_to_dec_proj",
+                "length_adapter",
+                "layernorm_embedding",
+                "attention",
+                "encoder",
+            ],
+            **kwargs,
     ):
         config = SpeechMixConfig.from_configs(speech_model_config,
                                               nlp_model_config)
@@ -129,13 +129,13 @@ class HFSpeechMixED(PreTrainedModel):
                                   self.config.decoder_start_token_id)
 
     def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past=None,
-        attention_mask=None,
-        use_cache=None,
-        encoder_outputs=None,
-        **kwargs,
+            self,
+            input_ids,
+            past=None,
+            attention_mask=None,
+            use_cache=None,
+            encoder_outputs=None,
+            **kwargs,
     ):
         decoder_inputs = self.decoder_model.prepare_inputs_for_generation(
             input_ids, past=past)
@@ -185,23 +185,23 @@ class HFSpeechMixEED(PreTrainedModel):
     main_input_name = "input_values"
 
     def __init__(
-        self,
-        speech_model_config,
-        nlp_model_config,
-        share_layer_ratio=0,
-        down_scale=8,
-        weighted_sum=False,
-        fixed_parameters=False,
-        fixed_except=[
-            "layer_norm",
-            "encoder_attn",
-            "enc_to_dec_proj",
-            "length_adapter",
-            "layernorm_embedding",
-            "attention",
-            "encoder",
-        ],
-        **kwargs,
+            self,
+            speech_model_config,
+            nlp_model_config,
+            share_layer_ratio=0,
+            down_scale=8,
+            weighted_sum=False,
+            fixed_parameters=False,
+            fixed_except=[
+                "layer_norm",
+                "encoder_attn",
+                "enc_to_dec_proj",
+                "length_adapter",
+                "layernorm_embedding",
+                "attention",
+                "encoder",
+            ],
+            **kwargs,
     ):
         config = SpeechMixConfig.from_configs(speech_model_config,
                                               nlp_model_config)
@@ -275,8 +275,8 @@ class HFSpeechMixEED(PreTrainedModel):
             self.encoder_model.eval()
             self.decoder_model.eval()
             for xcoder in [
-                    self.encoder_model.named_parameters,
-                    self.decoder_model.named_parameters,
+                self.encoder_model.named_parameters,
+                self.decoder_model.named_parameters,
             ]:
                 for name, param in xcoder():
                     if param.requires_grad:
@@ -310,13 +310,13 @@ class HFSpeechMixEED(PreTrainedModel):
                                   self.config.decoder_start_token_id)
 
     def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past=None,
-        attention_mask=None,
-        use_cache=None,
-        encoder_outputs=None,
-        **kwargs,
+            self,
+            input_ids,
+            past=None,
+            attention_mask=None,
+            use_cache=None,
+            encoder_outputs=None,
+            **kwargs,
     ):
         # decoder_inputs = self.decoder_model.prepare_inputs_for_generation(input_ids, past=past)
         # decoder_attention_mask = decoder_inputs["attention_mask"] if "attention_mask" in decoder_inputs else None
@@ -331,18 +331,19 @@ class HFSpeechMixEED(PreTrainedModel):
             "use_cache": use_cache,
             "decoder_input_ids": input_ids,
         }
+        input_dict.update(kwargs)
         return input_dict
 
     def custom_modules(self, **kwargs):
         return None
 
     def cal_loss(
-        self,
-        inputs_embeds=None,
-        text_input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        labels=None,
+            self,
+            inputs_embeds=None,
+            text_input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            labels=None,
     ):
         if inputs_embeds is not None:
             output = self.decoder_model(
@@ -360,18 +361,18 @@ class HFSpeechMixEED(PreTrainedModel):
         return output
 
     def forward(
-        self,
-        input_values=None,
-        input_text_prompt=None,
-        text_input_ids=None,
-        decoder_input_ids=None,
-        labels=None,
-        encoder_outputs=None,
-        return_model_detail=False,
-        output_attentions=None,
-        output_hidden_states=None,
-        return_dict=None,
-        **kwargs,
+            self,
+            input_values=None,
+            decoder_text_prompt=None,
+            text_input_ids=None,
+            decoder_input_ids=None,
+            labels=None,
+            encoder_outputs=None,
+            return_model_detail=False,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            **kwargs,
     ):
         return_dict = {}
         if encoder_outputs is None:
@@ -412,12 +413,12 @@ class HFSpeechMixEED(PreTrainedModel):
         inputs_embeds = self.enc_to_dec_proj(inputs_embeds)
         if return_model_detail:
             return_dict["shape_after_enc_dec_projector"] = inputs_embeds.shape
-        if input_text_prompt is not None:
+        if decoder_text_prompt is not None:
             text_prompt = self.nlp_emb(
-                self.tokenizer(input_text_prompt,
+                self.tokenizer(decoder_text_prompt,
                                return_tensors="pt")["input_ids"].to(
-                                   self.device))
-            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1).shape
+                    self.device))
+            inputs_embeds = torch.cat((text_prompt, inputs_embeds), 1)
         outputs = self.cal_loss(
             inputs_embeds=inputs_embeds,
             text_input_ids=text_input_ids,
@@ -494,7 +495,7 @@ class HFSpeechMixAdapter(HFSpeechMixEED):
         for s_i, s in enumerate(decoder_stack):
             for l_i, l in enumerate(s):
                 l.register_forward_hook(lambda m, i, o: (self.adapters[
-                    s_i * len(s) + l_i](o[0]), o[1:]))
+                                                             s_i * len(s) + l_i](o[0]), o[1:]))
 
 
 class HFSpeechMixSelf(HFSpeechMixEED):
@@ -526,12 +527,12 @@ class HFSpeechMixSelf(HFSpeechMixEED):
         #     l.register_forward_hook(lambda m, i, o: (self.adapters[l_i](o[0]), o[1:]))
 
     def cal_loss(
-        self,
-        inputs_embeds=None,
-        text_input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        labels=None,
+            self,
+            inputs_embeds=None,
+            text_input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            labels=None,
     ):
         if labels is not None:
             labels = labels.to(self.device)
@@ -582,19 +583,19 @@ class HFSpeechMixGAN(HFSpeechMixEED):
 
     def custom_modules(self, **kwargs):
         self.discriminator = nn.Linear(
-            self.decoder_model.config.hidden_size**2, 1).to(self.device)
+            self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
         self.des_update = 1000
         self.update_count = 1
         self.keep_update = 1000
         return None
 
     def cal_loss(
-        self,
-        inputs_embeds=None,
-        text_input_ids=None,
-        attention_mask=None,
-        decoder_input_ids=None,
-        labels=None,
+            self,
+            inputs_embeds=None,
+            text_input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            labels=None,
     ):
         outputs = self.decoder_model(
             inputs_embeds=inputs_embeds,

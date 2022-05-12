@@ -1,7 +1,7 @@
 import torch
 from datasets import load_dataset
 
-from speechmix import HFSpeechMixEED
+from speechmix import HFSpeechMixEED, SpeechMixEEDT5eval
 
 ds = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
 spm = HFSpeechMixEED('facebook/wav2vec2-large-960h-lv60', "voidful/phoneme_byt5",

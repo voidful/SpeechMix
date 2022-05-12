@@ -143,11 +143,12 @@ class HFSpeechMixED(PreTrainedModel):
                                   "attention_mask" in decoder_inputs else None)
         # "attention_mask": attention_mask,
         # "decoder_attention_mask": decoder_attention_mask,
-        # "past_key_values": decoder_inputs["past_key_values"],
-        # "use_cache": use_cache,
         input_dict = {
             "decoder_input_ids": decoder_inputs["input_ids"],
+            "decoder_attention_mask": decoder_attention_mask,
             "encoder_outputs": encoder_outputs,
+            "past_key_values": decoder_inputs["past_key_values"],
+            "use_cache": use_cache,
         }
         return input_dict
 
@@ -299,6 +300,8 @@ class HFSpeechMixEED(PreTrainedModel):
         self.list_grad = list_grad
         self.list_no_grad = list_no_grad
 
+        self.decoder_outputs = None
+
     def get_encoder(self):
         return self.encoder_model
 
@@ -318,17 +321,15 @@ class HFSpeechMixEED(PreTrainedModel):
             encoder_outputs=None,
             **kwargs,
     ):
+        # "attention_mask": attention_mask,
         # decoder_inputs = self.decoder_model.prepare_inputs_for_generation(input_ids, past=past)
         # decoder_attention_mask = decoder_inputs["attention_mask"] if "attention_mask" in decoder_inputs else None
-        # "attention_mask": attention_mask,
         # "decoder_attention_mask": decoder_attention_mask,
-        # "past_key_values": decoder_inputs["past_key_values"],
-        # "use_cache": use_cache,
         input_dict = {
-            "decoder_input_ids": input_ids,
             "encoder_outputs": encoder_outputs,
             "attention_mask": attention_mask,
             "use_cache": use_cache,
+            "past_key_values": past,
             "decoder_input_ids": input_ids,
         }
         input_dict.update(kwargs)
@@ -345,22 +346,34 @@ class HFSpeechMixEED(PreTrainedModel):
             inputs_embeds=None,
             text_input_ids=None,
             attention_mask=None,
+            decoder_outputs=None,
             decoder_input_ids=None,
             labels=None,
+            past_key_values=None,
+            use_cache=None,
     ):
+        if past_key_values is None:
+            self.decoder_outputs = None
         if inputs_embeds is not None:
             output = self.decoder_model(
                 inputs_embeds=inputs_embeds,
+                encoder_outputs=decoder_outputs if decoder_outputs else self.decoder_outputs,
                 attention_mask=attention_mask,
                 decoder_input_ids=decoder_input_ids,
                 labels=labels,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
             )
         elif text_input_ids is not None:
             output = self.decoder_model(
                 input_ids=text_input_ids,
+                encoder_outputs=decoder_outputs if decoder_outputs else self.decoder_outputs,
                 decoder_input_ids=decoder_input_ids,
                 labels=labels,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
             )
+        self.decoder_outputs = [output.encoder_last_hidden_state]
         return output
 
     def forward(
@@ -371,7 +384,10 @@ class HFSpeechMixEED(PreTrainedModel):
             decoder_input_ids=None,
             labels=None,
             encoder_outputs=None,
-            return_model_detail=False,
+            decoder_outputs=None,
+            past_key_values=None,
+            use_cache=None,
+            return_model_detail=True,
             output_attentions=None,
             output_hidden_states=None,
             return_dict=None,
@@ -379,8 +395,7 @@ class HFSpeechMixEED(PreTrainedModel):
     ):
         return_dict = {}
         if encoder_outputs is None:
-            encoder_outputs = self.encoder_model(input_values,
-                                                 output_hidden_states=True)
+            encoder_outputs = self.encoder_model(input_values, output_hidden_states=True)
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(
                 self.decoder_model.config,
@@ -418,32 +433,19 @@ class HFSpeechMixEED(PreTrainedModel):
             return_dict["shape_after_enc_dec_projector"] = inputs_embeds.shape
         if decoder_text_prompt is not None:
             text_prompt = self.nlp_emb(
-                self.tokenizer(decoder_text_prompt,
-                               return_tensors="pt")["input_ids"].to(
-                    self.device))
+                self.tokenizer(decoder_text_prompt, return_tensors="pt")["input_ids"].to(self.device))
             inputs_embeds = torch.cat((text_prompt.expand(inputs_embeds.shape[0], -1, -1), inputs_embeds), 1)
         outputs = self.cal_loss(
             inputs_embeds=inputs_embeds,
+            decoder_outputs=decoder_outputs,
             text_input_ids=text_input_ids,
             decoder_input_ids=decoder_input_ids,
             labels=labels,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
         )
         return_dict["logits"] = torch.argmax(outputs["logits"], -1)
-        if "loss" in outputs:
-            return_dict["loss"] = outputs["loss"]
-        # return return_dict
-
-        return Seq2SeqLMOutput(
-            loss=outputs["loss"] if "loss" in outputs else None,
-            logits=outputs.logits,
-            past_key_values=outputs.past_key_values,
-            decoder_hidden_states=outputs.decoder_hidden_states,
-            decoder_attentions=outputs.decoder_attentions,
-            cross_attentions=outputs.cross_attentions,
-            # encoder_last_hidden_state=encoder_outputs.last_hidden_state,
-            # encoder_hidden_states=encoder_outputs.hidden_states,
-            # encoder_attentions=encoder_outputs.attentions,
-        )
+        return outputs
 
 
 class HFSpeechMixFixed(HFSpeechMixEED):

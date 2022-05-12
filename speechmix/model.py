@@ -28,11 +28,14 @@ class SpeechMixED(nn.Module):
                  fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                "layernorm_embedding", 'attention', 'encoder'], **kwargs):
         super(SpeechMixED, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(speech_model_config, nlp_model_config)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(
+            speech_model_config, nlp_model_config)
         self.model.config.decoder_start_token_id = self.model.config.decoder.decoder_start_token_id
         self.model.config.pad_token_id = self.model.config.decoder.pad_token_id
-        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(speech_model_config)
+        self.processor = Wav2Vec2FeatureExtractor.from_pretrained(
+            speech_model_config)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         self.model.freeze_feature_encoder()
         if fixed_parameters:
@@ -45,7 +48,8 @@ class SpeechMixED(nn.Module):
 
     def forward(self, input_values, attention_mask=None, decoder_input_ids=None, labels=None):
         if decoder_input_ids is None and labels is None:
-            decoder_input_ids = handle_decoder_input_none(self.model.config.decoder, device=self.device)
+            decoder_input_ids = handle_decoder_input_none(
+                self.model.config.decoder, device=self.device)
         outputs = self.model(input_values=input_values, attention_mask=attention_mask,
                              decoder_input_ids=decoder_input_ids, labels=labels)
         return_dict = {'logits': torch.argmax(outputs['logits'], -1)}
@@ -61,26 +65,34 @@ class SpeechMixEED(nn.Module):
                  fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                "layernorm_embedding", 'attention', 'encoder'], **kwargs):
         super(SpeechMixEED, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.encoder_model = getattr(hub, speech_model_config)().to(self.device)
-        self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(nlp_model_config).to(self.device)
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
+        self.encoder_model = getattr(
+            hub, speech_model_config)().to(self.device)
+        self.decoder_model = AutoModelForSeq2SeqLM.from_pretrained(
+            nlp_model_config).to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(nlp_model_config)
         self.weighted_sum = weighted_sum
 
         num_nlp_encoder_layers = 0
         if hasattr(self.decoder_model.base_model.encoder, 'layers'):
-            num_nlp_encoder_layers = len(self.decoder_model.base_model.encoder.layers)
+            num_nlp_encoder_layers = len(
+                self.decoder_model.base_model.encoder.layers)
         elif hasattr(self.decoder_model.base_model.encoder, 'block'):
-            num_nlp_encoder_layers = len(self.decoder_model.base_model.encoder.block)
+            num_nlp_encoder_layers = len(
+                self.decoder_model.base_model.encoder.block)
 
-        print("Before layer sharing num_speech_encoder_layers", len(self.encoder_model.model.encoder.layers))
+        print("Before layer sharing num_speech_encoder_layers",
+              len(self.encoder_model.model.encoder.layers))
         remove_layers = int(
             len(self.encoder_model.model.encoder.layers) * share_layer_ratio) if share_layer_ratio != 0 else 0
         self.encoder_model.model.encoder.layers = self.encoder_model.model.encoder.layers[
-                                                  :len(self.encoder_model.model.encoder.layers) - remove_layers]
-        self.num_speech_encoder_layers = len(self.encoder_model.model.encoder.layers)
+            :len(self.encoder_model.model.encoder.layers) - remove_layers]
+        self.num_speech_encoder_layers = len(
+            self.encoder_model.model.encoder.layers)
         print("After layer sharing ",
-              "num_speech_encoder_layers", len(self.encoder_model.model.encoder.layers),
+              "num_speech_encoder_layers", len(
+                  self.encoder_model.model.encoder.layers),
               "num_nlp_encoder_layers", num_nlp_encoder_layers,
               "share_layer_ratio", share_layer_ratio,
               "remove_layers", remove_layers, )
@@ -97,7 +109,8 @@ class SpeechMixEED(nn.Module):
         else:
             self.length_adapters = nn.Sequential(nn.Identity()).to(self.device)
 
-        self.weights_sum = nn.Parameter(torch.zeros(self.num_speech_encoder_layers)).to(self.device)
+        self.weights_sum = nn.Parameter(torch.zeros(
+            self.num_speech_encoder_layers)).to(self.device)
         self.enc_to_dec_proj = nn.Linear(self.encoder_model.model.final_proj.in_features,
                                          self.decoder_model.config.hidden_size).to(self.device)
         self.custom_modules(**kwargs)
@@ -120,7 +133,8 @@ class SpeechMixEED(nn.Module):
             else:
                 list_no_grad.append(name)
 
-        self.speech_encoder_layer = len(self.encoder_model.model.encoder.layers)
+        self.speech_encoder_layer = len(
+            self.encoder_model.model.encoder.layers)
         self.nlp_emb = self.decoder_model.get_input_embeddings()
         self.nlp_encoder_layer = num_nlp_encoder_layers
         self.list_grad = list_grad
@@ -136,7 +150,7 @@ class SpeechMixEED(nn.Module):
                                         decoder_input_ids=decoder_input_ids, labels=labels)
         return output
 
-    def forward(self, input_values, input_text_prompt=None,decoder_input_ids=None, labels=None,
+    def forward(self, input_values, input_text_prompt=None, decoder_input_ids=None, labels=None,
                 return_model_detail=False):
         if decoder_input_ids is None and labels is None:
             decoder_input_ids = handle_decoder_input_none(self.decoder_model.config, len(input_values),
@@ -149,17 +163,21 @@ class SpeechMixEED(nn.Module):
         inputs_embeds = encoder_outputs['last_hidden_state'].to(self.device)
         if self.weighted_sum:
             # weighted sum
-            stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
+            stacked_feature = torch.stack(
+                encoder_outputs['hidden_states'], dim=0)
             _, *origin_shape = stacked_feature.shape
-            stacked_feature = stacked_feature.view(self.num_speech_encoder_layers, -1)
+            stacked_feature = stacked_feature.view(
+                self.num_speech_encoder_layers, -1)
             norm_weights = F.softmax(self.weights_sum, dim=-1)
             if return_model_detail:
                 return_dict['weighted_sum'] = norm_weights
-            weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+            weighted_feature = (norm_weights.unsqueeze(-1)
+                                * stacked_feature).sum(dim=0)
             inputs_embeds = weighted_feature.view(*origin_shape)
         if return_model_detail:
             return_dict['shape_before_length_adapter'] = inputs_embeds.shape
-        inputs_embeds = self.length_adapters(inputs_embeds.transpose(1, 2)).transpose(1, 2)
+        inputs_embeds = self.length_adapters(
+            inputs_embeds.transpose(1, 2)).transpose(1, 2)
         if return_model_detail:
             return_dict['shape_before_enc_dec_projector'] = inputs_embeds.shape
         inputs_embeds = self.enc_to_dec_proj(inputs_embeds)
@@ -219,7 +237,8 @@ class SpeechMixAdapter(SpeechMixEED):
         self.adapters.to(self.device)
         for s_i, s in enumerate(decoder_stack):
             for l_i, l in enumerate(s):
-                l.register_forward_hook(lambda m, i, o: (self.adapters[s_i * len(s) + l_i](o[0]), o[1:]))
+                l.register_forward_hook(lambda m, i, o: (
+                    self.adapters[s_i * len(s) + l_i](o[0]), o[1:]))
 
 
 class SpeechMixSelf(SpeechMixEED):
@@ -249,7 +268,8 @@ class SpeechMixSelf(SpeechMixEED):
             attn_output = torch.bmm(nlp_hidden,
                                     speech_hidden.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1))
             softmax = torch.nn.Softmax(dim=-1)
-            attn_output = softmax(attn_output / math.sqrt(self.decoder_model.config.hidden_size))
+            attn_output = softmax(
+                attn_output / math.sqrt(self.decoder_model.config.hidden_size))
             voice_projected_embeds = torch.bmm(attn_output, speech_hidden)
             mse_loss_fn = torch.nn.MSELoss()
             mse_loss = mse_loss_fn(voice_projected_embeds, nlp_hidden)
@@ -276,7 +296,8 @@ class SpeechMixGAN(SpeechMixEED):
             if param.requires_grad:
                 param.requires_grad = False
 
-        self.discriminator = nn.Linear(self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
+        self.discriminator = nn.Linear(
+            self.decoder_model.config.hidden_size ** 2, 1).to(self.device)
         self.des_update = 1000
         self.update_count = 1
         self.keep_update = 1000
@@ -314,14 +335,16 @@ class SpeechMixGAN(SpeechMixEED):
 
             loss_fn = torch.nn.BCEWithLogitsLoss()
             voice_enc_attn_output = torch.bmm(
-                inputs_embeds.view(inputs_embeds.shape[0], self.decoder_model.config.hidden_size, -1),
+                inputs_embeds.view(
+                    inputs_embeds.shape[0], self.decoder_model.config.hidden_size, -1),
                 inputs_embeds.view(inputs_embeds.shape[0], -1, self.decoder_model.config.hidden_size)) \
                 .flatten(start_dim=1)
             vt_enc_loss = loss_fn(self.discriminator(voice_enc_attn_output).flatten(),
                                   torch.ones(voice_enc_attn_output.shape[0]).to(self.device))
 
             nlp_enc_attn_output = torch.bmm(
-                nlp_encoder_hidden.view(nlp_encoder_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                nlp_encoder_hidden.view(
+                    nlp_encoder_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
                 nlp_encoder_hidden.view(nlp_encoder_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
                 .flatten(start_dim=1)
 
@@ -329,7 +352,8 @@ class SpeechMixGAN(SpeechMixEED):
                                   torch.zeros(nlp_enc_attn_output.shape[0]).to(self.device))
 
             voice_attn_output = torch.bmm(
-                voice_hidden.view(voice_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                voice_hidden.view(
+                    voice_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
                 voice_hidden.view(voice_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
                 .flatten(start_dim=1)
 
@@ -337,7 +361,8 @@ class SpeechMixGAN(SpeechMixEED):
                               torch.ones(voice_attn_output.shape[0]).to(self.device))
 
             nlp_attn_output = torch.bmm(
-                nlp_hidden.view(nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
+                nlp_hidden.view(
+                    nlp_hidden.shape[0], self.decoder_model.config.hidden_size, -1),
                 nlp_hidden.view(nlp_hidden.shape[0], -1, self.decoder_model.config.hidden_size)) \
                 .flatten(start_dim=1)
 
@@ -349,6 +374,8 @@ class SpeechMixGAN(SpeechMixEED):
         return outputs
 
 # To be removed
+
+
 class SpeechMixEEDT5eval(SpeechMixEEDT5):
     def __init__(self, speech_model_config, nlp_model_config, share_layer_ratio=0,
                  down_scale=8, weighted_sum=False,
@@ -356,32 +383,35 @@ class SpeechMixEEDT5eval(SpeechMixEEDT5):
                  fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
                                "layernorm_embedding", 'attention', 'encoder'], **kwargs):
         super(SpeechMixEEDT5eval, self).__init__(speech_model_config, nlp_model_config, share_layer_ratio,
-                 down_scale, weighted_sum, fixed_parameters, fixed_except)
+                                                 down_scale, weighted_sum, fixed_parameters, fixed_except)
 
     def forward(self, speech_input, decoder_text_prompt=None, labels=None, decoder_attention_mask=None, return_model_detail=False):
         return_dict = {}
         #input_values = self.encoder_processor(speech_input, return_tensors="pt", padding="longest", sampling_rate = 16000).input_values
         #input_values = input_values.to(self.device)
         input_values = speech_input.to(self.device)
-        
+
         encoder_outputs = self.encoder_model(input_values)
-        #print(encoder_outputs)
+        # print(encoder_outputs)
         inputs_embeds = encoder_outputs['last_hidden_state'].to(self.device)
 
         if self.weighted_sum:
             # weighted sum
-            stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
+            stacked_feature = torch.stack(
+                encoder_outputs['hidden_states'], dim=0)
             _, *origin_shape = stacked_feature.shape
-            stacked_feature = stacked_feature.view(self.num_speech_encoder_layers, -1)
+            stacked_feature = stacked_feature.view(
+                self.num_speech_encoder_layers, -1)
             norm_weights = F.softmax(self.weights_sum, dim=-1)
             if return_model_detail:
                 return_dict['weighted_sum'] = norm_weights
-            weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+            weighted_feature = (norm_weights.unsqueeze(-1)
+                                * stacked_feature).sum(dim=0)
             inputs_embeds = weighted_feature.view(*origin_shape)
         if return_model_detail:
             return_dict['shape_before_length_adapter'] = inputs_embeds.shape
-        inputs_embeds = self.length_adapters(inputs_embeds.transpose(1, 2)).transpose(1, 2)
-
+        inputs_embeds = self.length_adapters(
+            inputs_embeds.transpose(1, 2)).transpose(1, 2)
 
         if return_model_detail:
             return_dict['shape_before_enc_dec_projector'] = inputs_embeds.shape
@@ -389,20 +419,22 @@ class SpeechMixEEDT5eval(SpeechMixEEDT5):
         if return_model_detail:
             return_dict['shape_after_enc_dec_projector'] = inputs_embeds.shape
         if decoder_text_prompt is not None:
-            text_prompt_emds = self.nlp_emb(decoder_text_prompt.to(self.device))
-            #print(text_prompt_emds.shape)
-            #print(inputs_embeds.shape)
+            text_prompt_emds = self.nlp_emb(
+                decoder_text_prompt.to(self.device))
+            # print(text_prompt_emds.shape)
+            # print(inputs_embeds.shape)
             inputs_embeds = torch.cat((text_prompt_emds, inputs_embeds), 1)
         if labels is not None:
-            outputs = self.cal_loss(inputs_embeds=inputs_embeds, labels=labels, decoder_attention_mask=decoder_attention_mask )
+            outputs = self.cal_loss(
+                inputs_embeds=inputs_embeds, labels=labels, decoder_attention_mask=decoder_attention_mask)
         else:
             outputs = {}
         generated_ids = self.decoder_model.generate(
-            inputs_embeds = inputs_embeds, 
+            inputs_embeds=inputs_embeds,
             max_length=self.decode_max_len,
             num_beams=10,
         )
         return_dict['logits'] = generated_ids
         if 'loss' in outputs:
-           return_dict['loss'] = outputs['loss']
+            return_dict['loss'] = outputs['loss']
         return return_dict

@@ -444,7 +444,7 @@ class HFSpeechMixEED(PreTrainedModel):
             past_key_values=past_key_values,
             use_cache=use_cache,
         )
-        return_dict["logits"] = torch.argmax(outputs["logits"], -1)
+        outputs["logits"] = torch.argmax(outputs["logits"], -1)
         return outputs
 
 

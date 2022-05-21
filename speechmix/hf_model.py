@@ -200,7 +200,6 @@ class HFSpeechMixEED(PreTrainedModel):
                 "length_adapter",
                 "layernorm_embedding",
                 "attention",
-                "encoder",
             ],
             **kwargs,
     ):

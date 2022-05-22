@@ -347,3 +347,62 @@ class SpeechMixGAN(SpeechMixEED):
             loss += vt_loss + nt_loss + nt_enc_loss + vt_enc_loss
         outputs['loss'] = loss
         return outputs
+
+# To be removed
+class SpeechMixEEDT5eval(SpeechMixEEDT5):
+    def __init__(self, speech_model_config, nlp_model_config, share_layer_ratio=0,
+                 down_scale=8, weighted_sum=False,
+                 fixed_parameters=False,
+                 fixed_except=["layer_norm", "encoder_attn", 'enc_to_dec_proj', 'length_adapter',
+                               "layernorm_embedding", 'attention', 'encoder'], **kwargs):
+        super(SpeechMixEEDT5eval, self).__init__(speech_model_config, nlp_model_config, share_layer_ratio,
+                 down_scale, weighted_sum, fixed_parameters, fixed_except)
+
+    def forward(self, speech_input, decoder_text_prompt=None, labels=None, decoder_attention_mask=None, return_model_detail=False):
+        return_dict = {}
+        #input_values = self.encoder_processor(speech_input, return_tensors="pt", padding="longest", sampling_rate = 16000).input_values
+        #input_values = input_values.to(self.device)
+        input_values = speech_input.to(self.device)
+        
+        encoder_outputs = self.encoder_model(input_values)
+        #print(encoder_outputs)
+        inputs_embeds = encoder_outputs['last_hidden_state'].to(self.device)
+
+        if self.weighted_sum:
+            # weighted sum
+            stacked_feature = torch.stack(encoder_outputs['hidden_states'], dim=0)
+            _, *origin_shape = stacked_feature.shape
+            stacked_feature = stacked_feature.view(self.num_speech_encoder_layers, -1)
+            norm_weights = F.softmax(self.weights_sum, dim=-1)
+            if return_model_detail:
+                return_dict['weighted_sum'] = norm_weights
+            weighted_feature = (norm_weights.unsqueeze(-1) * stacked_feature).sum(dim=0)
+            inputs_embeds = weighted_feature.view(*origin_shape)
+        if return_model_detail:
+            return_dict['shape_before_length_adapter'] = inputs_embeds.shape
+        inputs_embeds = self.length_adapters(inputs_embeds.transpose(1, 2)).transpose(1, 2)
+
+
+        if return_model_detail:
+            return_dict['shape_before_enc_dec_projector'] = inputs_embeds.shape
+        inputs_embeds = self.enc_to_dec_proj(inputs_embeds)
+        if return_model_detail:
+            return_dict['shape_after_enc_dec_projector'] = inputs_embeds.shape
+        if decoder_text_prompt is not None:
+            text_prompt_emds = self.nlp_emb(decoder_text_prompt.to(self.device))
+            #print(text_prompt_emds.shape)
+            #print(inputs_embeds.shape)
+            inputs_embeds = torch.cat((text_prompt_emds, inputs_embeds), 1)
+        if labels is not None:
+            outputs = self.cal_loss(inputs_embeds=inputs_embeds, labels=labels, decoder_attention_mask=decoder_attention_mask )
+        else:
+            outputs = {}
+        generated_ids = self.decoder_model.generate(
+            inputs_embeds = inputs_embeds, 
+            max_length=self.decode_max_len,
+            num_beams=10,
+        )
+        return_dict['logits'] = generated_ids
+        if 'loss' in outputs:
+           return_dict['loss'] = outputs['loss']
+        return return_dict

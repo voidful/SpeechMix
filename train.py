@@ -35,16 +35,31 @@ def create_self_decoder_input(decoder_model, tokenizer, input_sent, device):
 
 
 def main(arg=None):
-    def prepare_dataset_custom(batch):
+    def prepare_dataset_custom(batch, input_text_prompt='', selftype=False):
         path = batch["path"]
         speech, sampling_rate = torchaudio.load(path)
         resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16_000)
         batch["input_values"] = resampler.forward(speech.squeeze(0)).numpy()
         batch["lengths"] = len(batch["input_values"])
-        batch["labels"] = model.tokenizer(batch["text"]).input_ids
+        sent = batch["text"].lower()
+        if selftype:
+            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
+                                                                      input_text_prompt + sent,
+                                                                      model.device)
+            batch['input_text_prompt'] = input_text_prompt
+            batch["text_input_ids"] = decoder_input
+            batch['labels'] = decoder_target
+        else:
+            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
+                                                                      input_text_prompt + sent,
+                                                                      model.device)
+            batch['input_text_prompt'] = input_text_prompt
+            batch["text_input_ids"] = decoder_input
+            batch['labels'] = decoder_target
+        batch['labels'] += [model.tokenizer.eos_token_id]
         return batch
 
-    def prepare_dataset(batch, selftype=False):
+    def prepare_dataset(batch, input_text_prompt='', selftype=False):
         audio = batch["audio"]
         new_batch = {}
         new_batch["input_values"] = audio["array"]
@@ -52,7 +67,6 @@ def main(arg=None):
         sent = batch["text"] if 'text' in batch else batch["sentence"]
         sent = sent.lower()
         if selftype:
-            input_text_prompt = "ASR: "
             decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
                                                                       input_text_prompt + sent,
                                                                       model.device)
@@ -60,8 +74,12 @@ def main(arg=None):
             new_batch["text_input_ids"] = decoder_input
             new_batch['labels'] = decoder_target
         else:
-            gen_input = model.tokenizer(sent, add_special_tokens=False).input_ids
-            new_batch['labels'] = gen_input
+            decoder_input, decoder_target = create_self_decoder_input(model.decoder_model, model.tokenizer,
+                                                                      input_text_prompt + sent,
+                                                                      model.device)
+            new_batch['input_text_prompt'] = input_text_prompt
+            new_batch["text_input_ids"] = decoder_input
+            new_batch['labels'] = decoder_target
         new_batch['labels'] += [model.tokenizer.eos_token_id]
         return new_batch
 
@@ -142,7 +160,7 @@ def main(arg=None):
                 release = self.name_list[-int(self.freeze_layers * state.epoch):]
                 for name, param in self.freeze_model.named_parameters():
                     if name in release:
-                        param.requires_grad = True
+                        param.requires_grad = self.default_param_fix[name]
                     else:
                         param.requires_grad = False
             else:
@@ -172,6 +190,7 @@ def main(arg=None):
         parser.add_argument("--HFSpeechMixFixed", action='store_true')
         parser.add_argument("--cache", action='store_true')
         parser.add_argument("--dataset", type=str)
+        parser.add_argument("--prompt", type=str)
         parser.add_argument("--field", type=str)
         parser.add_argument("--train_split", type=str)
         parser.add_argument("--test_split", type=str)
@@ -200,7 +219,7 @@ def main(arg=None):
         parser.add_argument("--fp16", action='store_true')
         parser.add_argument("--wandb", action='store_true')
 
-        input_args, model_arg = parser.parse_known_args(args)
+        input_args, model_arg = parser.parse_ksnown_args(args)
         input_args = {k: v for k, v in vars(input_args).items() if v is not None}
         other_arg = {k.replace("--", ""): v for k, v in zip(model_arg[:-1:2], model_arg[1::2])}
         return input_args, other_arg
@@ -256,7 +275,8 @@ def main(arg=None):
             dataset = dataset['train']
             dataset = dataset.train_test_split(test_size=0.1)
             train_ds = dataset['train']
-            train_ds = train_ds.map(prepare_dataset_custom, keep_in_memory=False, num_proc=input_args["num_proc"])
+            train_ds = train_ds.map(prepare_dataset_custom, num_proc=input_args["num_proc"],
+                                    fn_kwargs={"selftype": selftype, "input_text_prompt": input_args.get("prompt", "")})
             train_ds.save_to_disk(cache_file_train)
 
         cache_file_test = f"{input_args['custom_set']}_hf_test.data"
@@ -268,7 +288,8 @@ def main(arg=None):
             dataset = dataset['train']
             dataset = dataset.train_test_split(test_size=0.1)
             valid_ds = dataset['test']
-            valid_ds = valid_ds.map(prepare_dataset_custom, keep_in_memory=False, num_proc=input_args["num_proc"])
+            valid_ds = valid_ds.map(prepare_dataset_custom, num_proc=input_args["num_proc"],
+                                    fn_kwargs={"selftype": selftype, "input_text_prompt": input_args.get("prompt", "")})
             valid_ds.save_to_disk(cache_file_test)
     else:
         cache_path_train = f'./train_ds_{input_args["dataset"]}_{model_type}_{input_args["speech_model_config"]}_{input_args["nlp_model_config"]}_{input_args["field"]}_{input_args["train_split"]}.parquet'
@@ -283,8 +304,10 @@ def main(arg=None):
             train_ds = train_ds.cast_column("audio", Audio(sampling_rate=16_000))
             valid_ds = valid_ds.cast_column("audio", Audio(sampling_rate=16_000))
 
-            train_ds = train_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
-            valid_ds = valid_ds.map(prepare_dataset, num_proc=1, fn_kwargs={"selftype": selftype})
+            train_ds = train_ds.map(prepare_dataset, num_proc=input_args["num_proc"],
+                                    fn_kwargs={"selftype": selftype, "input_text_prompt": input_args.get("prompt", "")})
+            valid_ds = valid_ds.map(prepare_dataset, num_proc=input_args["num_proc"],
+                                    fn_kwargs={"selftype": selftype, "input_text_prompt": input_args.get("prompt", "")})
 
             train_ds.save_to_disk(cache_path_train)
             valid_ds.save_to_disk(cache_path_valid)

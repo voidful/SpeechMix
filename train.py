@@ -219,7 +219,7 @@ def main(arg=None):
         parser.add_argument("--fp16", action='store_true')
         parser.add_argument("--wandb", action='store_true')
 
-        input_args, model_arg = parser.parse_ksnown_args(args)
+        input_args, model_arg = parser.parse_known_args(args)
         input_args = {k: v for k, v in vars(input_args).items() if v is not None}
         other_arg = {k.replace("--", ""): v for k, v in zip(model_arg[:-1:2], model_arg[1::2])}
         return input_args, other_arg
